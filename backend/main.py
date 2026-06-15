@@ -259,7 +259,8 @@ async def get_maaned(
             continue
 
         nettarif = nettarif_for_hour(hour)
-        pris_per_kwh = (spot + (fast_ore + nettarif) / 100.0) * (1 + MOMS)
+        # Spotpris er ekskl. moms; brugerens tariffer er inkl. moms
+        pris_per_kwh = spot * (1 + MOMS) + (fast_ore + nettarif) / 100.0
         kr = round(kwh * pris_per_kwh, 4)
 
         total_kr_forbrug += kr
@@ -278,9 +279,8 @@ async def get_maaned(
 
     gns_spotpris = (spotpris_sum / spotpris_count) if spotpris_count else 0.0
 
-    # Abonnement tillægges inkl. moms
-    abonnement_inkl_moms = round(ABONNEMENT_KR * (1 + MOMS), 2)
-    total_kr = round(total_kr_forbrug + abonnement_inkl_moms, 2)
+    # Abonnement er allerede inkl. moms
+    total_kr = round(total_kr_forbrug + ABONNEMENT_KR, 2)
 
     return {
         "aar": aar,
@@ -290,7 +290,7 @@ async def get_maaned(
         "zone": PRISZONE,
         "total_kwh": round(total_kwh, 3),
         "total_kr_forbrug": round(total_kr_forbrug, 2),
-        "abonnement_inkl_moms": abonnement_inkl_moms,
+        "abonnement_kr": ABONNEMENT_KR,
         "total_kr": total_kr,
         "gns_spotpris_kwh": round(gns_spotpris, 6),
         "afgifter": {
