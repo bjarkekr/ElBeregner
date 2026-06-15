@@ -59,7 +59,7 @@ def check_api_key(x_api_key: Optional[str] = Header(default=None)):
         raise HTTPException(status_code=401, detail="Ugyldig eller manglende API-nøgle.")
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
-ENERGIDATA_URL = "https://api.energidataservice.dk/dataset/Elspotprices"
+ENERGIDATA_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
 
 
 def nettarif_for_hour(utc_iso: str) -> float:
@@ -220,8 +220,8 @@ async def get_spotpriser(
         "start": f"{fra}T00:00",
         "end": f"{til_excl}T00:00",
         "filter": json.dumps({"PriceArea": pris_zone}),
-        "sort": "HourUTC asc",
-        "limit": 2000,
+        "sort": "TimeUTC asc",
+        "limit": 4000,
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -230,14 +230,14 @@ async def get_spotpriser(
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 
-    priser: dict[str, float] = {}
+    # Aggreger 15-min priser (DKK/MWh) til timepris (DKK/kWh)
+    summer: dict[str, list] = {}
     for r in resp.json().get("records", []):
-        hour_utc = r.get("HourUTC", "")
-        if hour_utc:
-            key = hour_utc.replace(" ", "T")
-            if not key.endswith("Z"):
-                key += "Z"
-            priser[key] = round((r.get("SpotPriceDKK") or 0.0) / 1000, 6)
+        t = r.get("TimeUTC", "")
+        if t:
+            key = t[:13].replace(" ", "T") + ":00:00Z"
+            summer.setdefault(key, []).append(r.get("DayAheadPriceDKK") or 0.0)
+    priser = {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
 
     return {"fra": fra, "til": til, "zone": pris_zone, "spotpriser": priser}
 
@@ -415,8 +415,8 @@ async def _fetch_spotpriser_raw(fra: str, til: str) -> dict:
         "start": f"{fra}T00:00",
         "end": f"{til_excl}T00:00",
         "filter": json.dumps({"PriceArea": PRISZONE}),
-        "sort": "HourUTC asc",
-        "limit": 2000,
+        "sort": "TimeUTC asc",
+        "limit": 4000,
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -425,13 +425,12 @@ async def _fetch_spotpriser_raw(fra: str, til: str) -> dict:
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 
-    priser: dict[str, float] = {}
+    summer: dict[str, list] = {}
     for r in resp.json().get("records", []):
-        hour_utc = r.get("HourUTC", "")
-        if hour_utc:
-            key = hour_utc.replace(" ", "T")
-            if not key.endswith("Z"):
-                key += "Z"
-            priser[key] = round((r.get("SpotPriceDKK") or 0.0) / 1000, 6)
+        t = r.get("TimeUTC", "")
+        if t:
+            key = t[:13].replace(" ", "T") + ":00:00Z"
+            summer.setdefault(key, []).append(r.get("DayAheadPriceDKK") or 0.0)
+    priser = {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
 
     return {"spotpriser": priser}
