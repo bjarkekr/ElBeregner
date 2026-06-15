@@ -419,7 +419,7 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
                 json=body,
             )
             if resp.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code}")
+                raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({chunk_start.strftime('%Y-%m-%d')} til {chunk_end.strftime('%Y-%m-%d')}): {resp.text[:300]}")
             consumption.update(parse_timeseries(resp.json().get("result", [])))
             chunk_start = chunk_end + timedelta(days=1)
 
