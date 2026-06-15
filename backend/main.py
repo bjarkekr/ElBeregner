@@ -368,6 +368,84 @@ async def get_maaned(
     }
 
 
+@app.get("/api/priser/dag")
+async def get_priser_dag(
+    x_api_key: Optional[str] = Header(default=None),
+):
+    check_api_key(x_api_key)
+
+    now_dk = datetime.now(DK_TZ)
+    today_dk = now_dk.date()
+    tomorrow_dk = today_dk + timedelta(days=1)
+    day_after_tomorrow_dk = today_dk + timedelta(days=2)
+
+    # Compute exact UTC boundaries for today/tomorrow in DK local time
+    start_utc = datetime(today_dk.year, today_dk.month, today_dk.day,
+                         tzinfo=DK_TZ).astimezone(ZoneInfo("UTC"))
+    end_utc = datetime(day_after_tomorrow_dk.year, day_after_tomorrow_dk.month,
+                       day_after_tomorrow_dk.day, tzinfo=DK_TZ).astimezone(ZoneInfo("UTC"))
+
+    params = {
+        "start": start_utc.strftime("%Y-%m-%dT%H:%M"),
+        "end": end_utc.strftime("%Y-%m-%dT%H:%M"),
+        "filter": json.dumps({"PriceArea": PRISZONE}),
+        "sort": "TimeUTC asc",
+        "limit": 200,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(ENERGIDATA_URL, params=params)
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
+
+    # Aggregate 15-min records to hourly
+    summer: dict[str, list] = {}
+    for r in resp.json().get("records", []):
+        t = r.get("TimeUTC", "")
+        if t:
+            key = t[:13].replace(" ", "T") + ":00:00Z"
+            summer.setdefault(key, []).append(r.get("DayAheadPriceDKK") or 0.0)
+
+    fast_ore = ELAFGIFT_ORE + SYSTEMTARIF_ORE + TRANSMISSIONSTARIF_ORE + ELSELSKAB_TILLÆG_ORE
+    now_hour_utc = now_dk.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%dT%H:00:00Z")
+
+    today_hours: list = []
+    tomorrow_hours: list = []
+
+    for hour_utc, prices in sorted(summer.items()):
+        dt_utc = datetime.fromisoformat(hour_utc.replace("Z", "+00:00"))
+        dt_dk = dt_utc.astimezone(DK_TZ)
+        dato_dk = dt_dk.date()
+
+        spot = round(sum(prices) / len(prices) / 1000, 6)
+        nettarif = nettarif_for_hour(hour_utc)
+        total = round(spot * (1 + MOMS) + (fast_ore + nettarif) / 100.0, 4)
+
+        entry = {
+            "time_utc": hour_utc,
+            "time_dk": dt_dk.strftime("%H:%M"),
+            "spot_dkk_kwh": spot,
+            "total_dkk_kwh": total,
+            "nettarif_ore": nettarif,
+            "er_nu": hour_utc == now_hour_utc,
+        }
+
+        if dato_dk == today_dk:
+            today_hours.append(entry)
+        elif dato_dk == tomorrow_dk:
+            tomorrow_hours.append(entry)
+
+    return {
+        "i_dag": str(today_dk),
+        "i_morgen": str(tomorrow_dk),
+        "nu_dk": now_dk.strftime("%H:%M"),
+        "i_dag_timer": today_hours,
+        "i_morgen_timer": tomorrow_hours,
+        "i_morgen_tilgængelig": len(tomorrow_hours) > 0,
+    }
+
+
 @app.get("/api/status")
 async def status():
     db_ok = False

@@ -89,6 +89,7 @@ function switchTab(tab) {
     s.classList.toggle('hidden', s.id !== `tab-${tab}`);
   });
   if (tab === 'historik' && !historikLoaded) loadHistorik();
+  if (tab === 'priser') loadPriser();
 }
 
 document.querySelectorAll('.tab').forEach(btn => {
@@ -364,6 +365,76 @@ function renderHistorik(rows) {
 
   document.querySelector('#tab-historik .chart-wrap').style.height = '280px';
 }
+
+// ─── PRISER VIEW ───────────────────────────────────────────────────────────
+
+function formatDagLabel(isoDate) {
+  const d = new Date(isoDate + 'T12:00:00');
+  return d.toLocaleDateString('da-DK', { weekday: 'long', day: 'numeric', month: 'long' });
+}
+
+function prisKlasse(value, alle) {
+  const sorted = [...alle].sort((a, b) => a - b);
+  const p33 = sorted[Math.floor(sorted.length / 3)];
+  const p67 = sorted[Math.floor(2 * sorted.length / 3)];
+  if (value <= p33) return 'pris-billig';
+  if (value <= p67) return 'pris-middel';
+  return 'pris-dyr';
+}
+
+function renderPrisTabel(tbodyId, timer) {
+  const tbody = document.getElementById(tbodyId);
+  tbody.innerHTML = '';
+  const alleTotal = timer.map(t => t.total_dkk_kwh);
+  timer.forEach(t => {
+    const h = parseInt(t.time_dk.split(':')[0]);
+    const tidLabel = `${pad(h)}–${pad((h + 1) % 24)}`;
+    const cls = prisKlasse(t.total_dkk_kwh, alleTotal);
+    const tr = document.createElement('tr');
+    tr.className = cls + (t.er_nu ? ' pris-nu' : '');
+    tr.innerHTML = `
+      <td>${tidLabel}${t.er_nu ? ' <span class="nu-badge">nu</span>' : ''}</td>
+      <td>${(t.spot_dkk_kwh * 100).toLocaleString('da-DK', {minimumFractionDigits:1, maximumFractionDigits:1})}</td>
+      <td>${t.total_dkk_kwh.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadPriser() {
+  document.getElementById('priser-spinner').classList.remove('hidden');
+  document.getElementById('priser-error').classList.add('hidden');
+  document.getElementById('priser-content').classList.add('hidden');
+
+  try {
+    const data = await apiFetch('/api/priser/dag');
+
+    document.getElementById('priser-idag-label').textContent = formatDagLabel(data.i_dag);
+    renderPrisTabel('priser-idag-tbody', data.i_dag_timer);
+
+    document.getElementById('priser-imorgen-label').textContent = formatDagLabel(data.i_morgen);
+
+    if (data.i_morgen_tilgængelig) {
+      document.getElementById('priser-imorgen-mangler').classList.add('hidden');
+      document.getElementById('priser-imorgen-tabel-wrap').classList.remove('hidden');
+      renderPrisTabel('priser-imorgen-tbody', data.i_morgen_timer);
+    } else {
+      const manglerEl = document.getElementById('priser-imorgen-mangler');
+      manglerEl.textContent = 'Morgendagens priser offentliggøres normalt efter kl. 13:00.';
+      manglerEl.classList.remove('hidden');
+      document.getElementById('priser-imorgen-tabel-wrap').classList.add('hidden');
+    }
+
+    document.getElementById('priser-spinner').classList.add('hidden');
+    document.getElementById('priser-content').classList.remove('hidden');
+  } catch (err) {
+    document.getElementById('priser-spinner').classList.add('hidden');
+    document.getElementById('priser-error').classList.remove('hidden');
+    document.getElementById('priser-error').textContent = err.message;
+  }
+}
+
+document.getElementById('priser-refresh').addEventListener('click', loadPriser);
 
 // ─── INDSTILLINGER VIEW ────────────────────────────────────────────────────
 function loadSettingsForm() {

@@ -350,7 +350,74 @@ tbody tr:hover { background: var(--green-pale); }
   color: #1b5e20;
 }
 
+/* PRISER TAB */
+.priser-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.priser-topbar .section-title { margin-bottom: 0; }
+
+.dag-sektion { margin-bottom: 20px; }
+
+.dag-overskrift {
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+  margin-bottom: 8px;
+  padding-left: 2px;
+}
+
+/* Price row colour bands (relative to the day) */
+tbody tr.pris-billig { background: #e8f5e9 !important; }
+tbody tr.pris-middel { background: #fff8e1 !important; }
+tbody tr.pris-dyr    { background: #ffebee !important; }
+
+tbody tr.pris-nu {
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--green);
+}
+
+.nu-badge {
+  background: var(--green);
+  color: #fff;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  padding: 1px 5px;
+  font-weight: 700;
+  vertical-align: middle;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.priser-forklaring {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 12px;
+  padding-left: 2px;
+}
+.fark-dot {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+.fark-dot.billig { background: #a5d6a7; }
+.fark-dot.middel { background: #ffe082; }
+.fark-dot.dyr    { background: #ef9a9a; }
+
 /* RESPONSIVE */
+@media (max-width: 420px) {
+  .tab { font-size: 0.78rem; padding: 12px 4px; }
+}
+
 @media (max-width: 380px) {
   .stats-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .stat-value { font-size: 1.3rem; }

@@ -26,7 +26,8 @@
   <nav class="tab-bar">
     <button class="tab active" data-tab="maaned">Måned</button>
     <button class="tab" data-tab="historik">Historik</button>
-    <button class="tab" data-tab="indstillinger">Indstillinger</button>
+    <button class="tab" data-tab="priser">Priser</button>
+    <button class="tab" data-tab="indstillinger">Indst.</button>
   </nav>
 
   <main>
@@ -92,6 +93,46 @@
             </thead>
             <tbody id="historik-tbody"></tbody>
           </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRISER VIEW -->
+    <section id="tab-priser" class="tab-content hidden">
+      <div class="priser-topbar">
+        <h2 class="section-title">Elpriser</h2>
+        <button id="priser-refresh" class="nav-btn" title="Opdater priser">&#8635;</button>
+      </div>
+
+      <div id="priser-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter priser…</p></div>
+      <div id="priser-error" class="error-box hidden"></div>
+
+      <div id="priser-content" class="hidden">
+        <div class="dag-sektion">
+          <div class="dag-overskrift" id="priser-idag-label"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Tid</th><th>Spot (øre)</th><th>I alt (kr/kWh)</th></tr></thead>
+              <tbody id="priser-idag-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="dag-sektion">
+          <div class="dag-overskrift" id="priser-imorgen-label"></div>
+          <div id="priser-imorgen-mangler" class="info-box hidden"></div>
+          <div id="priser-imorgen-tabel-wrap" class="table-wrap hidden">
+            <table>
+              <thead><tr><th>Tid</th><th>Spot (øre)</th><th>I alt (kr/kWh)</th></tr></thead>
+              <tbody id="priser-imorgen-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="priser-forklaring">
+          <span class="fark-dot billig"></span> Billig &nbsp;
+          <span class="fark-dot middel"></span> Middel &nbsp;
+          <span class="fark-dot dyr"></span> Dyr
         </div>
       </div>
     </section>
