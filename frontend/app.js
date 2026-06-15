@@ -387,6 +387,9 @@ document.getElementById('settings-form').addEventListener('submit', (e) => {
   fb.className = 'feedback success';
   fb.classList.remove('hidden');
   setTimeout(() => fb.classList.add('hidden'), 3000);
+
+  switchTab('maaned');
+  loadMaaned();
 });
 
 // ─── Init ──────────────────────────────────────────────────────────────────
