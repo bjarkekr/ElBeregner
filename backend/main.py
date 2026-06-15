@@ -1,7 +1,7 @@
 import os
 import json
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
 
@@ -14,18 +14,20 @@ app = FastAPI(title="ElBeregner API", version="1.0.0")
 # Config from environment
 ELOVERBLIK_TOKEN = os.getenv("ELOVERBLIK_TOKEN", "")
 ELAFGIFT_ORE = float(os.getenv("ELAFGIFT_ORE", "76.1"))
-NETTARIF_T1_ORE = float(os.getenv("NETTARIF_T1_ORE", "30.0"))   # 00-06 lavlast
-NETTARIF_T2_ORE = float(os.getenv("NETTARIF_T2_ORE", "92.0"))   # 06-17 høj
-NETTARIF_T3_ORE = float(os.getenv("NETTARIF_T3_ORE", "318.0"))  # 17-21 spidslast
-NETTARIF_T4_ORE = float(os.getenv("NETTARIF_T4_ORE", "92.0"))   # 21-24 høj
-ELSELSKAB_TILLÆG_ORE = float(os.getenv("ELSELSKAB_TILLÆG_ORE", "10.0"))
+NETTARIF_T1_ORE = float(os.getenv("NETTARIF_T1_ORE", "30.0"))    # 00-06 lavlast
+NETTARIF_T2_ORE = float(os.getenv("NETTARIF_T2_ORE", "92.0"))    # 06-17 høj
+NETTARIF_T3_ORE = float(os.getenv("NETTARIF_T3_ORE", "318.0"))   # 17-21 spidslast
+NETTARIF_T4_ORE = float(os.getenv("NETTARIF_T4_ORE", "92.0"))    # 21-24 høj
+SYSTEMTARIF_ORE = float(os.getenv("SYSTEMTARIF_ORE", "6.0"))      # Energinet systemtarif
+TRANSMISSIONSTARIF_ORE = float(os.getenv("TRANSMISSIONSTARIF_ORE", "4.9"))  # Energinet transmissionstarif
+ELSELSKAB_TILLÆG_ORE = float(os.getenv("ELSELSKAB_TILLÆG_ORE", "0.0"))
+ABONNEMENT_KR = float(os.getenv("ABONNEMENT_KR", "38.0"))         # Fast månedligt abonnement
 MOMS = float(os.getenv("MOMS", "0.25"))
 PRISZONE = os.getenv("PRISZONE", "DK1")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
 
 DK_TZ = ZoneInfo("Europe/Copenhagen")
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if ALLOWED_ORIGIN == "*" else [ALLOWED_ORIGIN],
@@ -34,7 +36,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory token cache
 _token_cache: dict = {"token": None, "expires_at": None}
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
@@ -86,10 +87,7 @@ async def get_access_token() -> str:
     data = resp.json()
     token = data.get("result")
     if not token:
-        raise HTTPException(
-            status_code=502,
-            detail="Eloverblik returnerede intet token.",
-        )
+        raise HTTPException(status_code=502, detail="Eloverblik returnerede intet token.")
 
     _token_cache["token"] = token
     _token_cache["expires_at"] = now + timedelta(hours=23)
@@ -109,19 +107,14 @@ async def get_metering_point_id(token: str) -> str:
             detail=f"Eloverblik målepunkt fejl: {resp.status_code}",
         )
 
-    data = resp.json()
-    points = data.get("result", [])
+    points = resp.json().get("result", [])
     if not points:
-        raise HTTPException(
-            status_code=404,
-            detail="Ingen målepunkter fundet på kontoen.",
-        )
+        raise HTTPException(status_code=404, detail="Ingen målepunkter fundet på kontoen.")
     return points[0]["meteringPointId"]
 
 
 def parse_timeseries(result: list) -> dict[str, float]:
     consumption: dict[str, float] = {}
-
     for item in result:
         doc = item.get("MyEnergyData_MarketDocument", {})
         for ts in doc.get("TimeSeries", []):
@@ -130,12 +123,9 @@ def parse_timeseries(result: list) -> dict[str, float]:
                 if not interval_start:
                     continue
                 try:
-                    start_dt = datetime.fromisoformat(
-                        interval_start.replace("Z", "+00:00")
-                    )
+                    start_dt = datetime.fromisoformat(interval_start.replace("Z", "+00:00"))
                 except ValueError:
                     continue
-
                 for point in period.get("Point", []):
                     pos = int(point.get("position", 1)) - 1
                     qty_raw = point.get("out_Quantity.quantity", "0") or "0"
@@ -146,7 +136,6 @@ def parse_timeseries(result: list) -> dict[str, float]:
                     hour_dt = start_dt + timedelta(hours=pos)
                     key = hour_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
                     consumption[key] = consumption.get(key, 0.0) + kwh
-
     return consumption
 
 
@@ -155,7 +144,6 @@ async def get_forbrug(
     fra: str = Query(..., description="YYYY-MM-DD"),
     til: str = Query(..., description="YYYY-MM-DD"),
 ):
-    """Hent timeforbrug i kWh fra eloverblik."""
     try:
         datetime.strptime(fra, "%Y-%m-%d")
         datetime.strptime(til, "%Y-%m-%d")
@@ -169,10 +157,7 @@ async def get_forbrug(
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra}/{til}/Hour",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=body,
         )
 
@@ -182,9 +167,7 @@ async def get_forbrug(
             detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} - {resp.text[:300]}",
         )
 
-    result = resp.json().get("result", [])
-    consumption = parse_timeseries(result)
-
+    consumption = parse_timeseries(resp.json().get("result", []))
     return {
         "fra": fra,
         "til": til,
@@ -200,7 +183,6 @@ async def get_spotpriser(
     til: str = Query(..., description="YYYY-MM-DD"),
     zone: Optional[str] = Query(None, description="DK1 eller DK2"),
 ):
-    """Hent spotpriser pr. time fra Energi Data Service."""
     try:
         datetime.strptime(fra, "%Y-%m-%d")
         datetime.strptime(til, "%Y-%m-%d")
@@ -208,9 +190,7 @@ async def get_spotpriser(
         raise HTTPException(status_code=400, detail="Dato skal være YYYY-MM-DD")
 
     pris_zone = zone or PRISZONE
-    til_excl = (
-        datetime.strptime(til, "%Y-%m-%d") + timedelta(days=1)
-    ).strftime("%Y-%m-%d")
+    til_excl = (datetime.strptime(til, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
     params = {
         "start": f"{fra}T00:00",
@@ -224,28 +204,18 @@ async def get_spotpriser(
         resp = await client.get(ENERGIDATA_URL, params=params)
 
     if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Energi Data Service fejl: {resp.status_code}",
-        )
+        raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 
-    records = resp.json().get("records", [])
     priser: dict[str, float] = {}
-    for r in records:
+    for r in resp.json().get("records", []):
         hour_utc = r.get("HourUTC", "")
         if hour_utc:
             key = hour_utc.replace(" ", "T")
             if not key.endswith("Z"):
                 key += "Z"
-            spot_mwh = r.get("SpotPriceDKK") or 0.0
-            priser[key] = round(spot_mwh / 1000, 6)
+            priser[key] = round((r.get("SpotPriceDKK") or 0.0) / 1000, 6)
 
-    return {
-        "fra": fra,
-        "til": til,
-        "zone": pris_zone,
-        "spotpriser": priser,
-    }
+    return {"fra": fra, "til": til, "zone": pris_zone, "spotpriser": priser}
 
 
 @app.get("/api/maaned")
@@ -253,36 +223,34 @@ async def get_maaned(
     aar: int = Query(..., description="Årstal, f.eks. 2024"),
     maaned: int = Query(..., description="Måned 1-12"),
 ):
-    """Beregn samlet månedspris: forbrug × spotpris + afgifter + moms."""
+    """Beregn samlet månedspris inkl. alle afgifter og abonnement."""
     if not (1 <= maaned <= 12):
         raise HTTPException(status_code=400, detail="Måned skal være 1-12")
 
     fra_dt = datetime(aar, maaned, 1)
-    if maaned == 12:
-        til_dt = datetime(aar + 1, 1, 1) - timedelta(days=1)
-    else:
-        til_dt = datetime(aar, maaned + 1, 1) - timedelta(days=1)
-
+    til_dt = (datetime(aar, maaned + 1, 1) if maaned < 12 else datetime(aar + 1, 1, 1)) - timedelta(days=1)
     fra = fra_dt.strftime("%Y-%m-%d")
     til = til_dt.strftime("%Y-%m-%d")
 
-    forbrug_task = asyncio.create_task(_fetch_forbrug_raw(fra, til))
-    spot_task = asyncio.create_task(_fetch_spotpriser_raw(fra, til))
-    forbrug_data, spot_data = await asyncio.gather(forbrug_task, spot_task)
+    forbrug_data, spot_data = await asyncio.gather(
+        asyncio.create_task(_fetch_forbrug_raw(fra, til)),
+        asyncio.create_task(_fetch_spotpriser_raw(fra, til)),
+    )
 
     timeforbrug = forbrug_data["timeforbrug"]
     spotpriser = spot_data["spotpriser"]
 
+    # Fast tillæg pr. kWh (uden nettarif, som er tidsafhængig)
+    fast_ore = ELAFGIFT_ORE + SYSTEMTARIF_ORE + TRANSMISSIONSTARIF_ORE + ELSELSKAB_TILLÆG_ORE
+
     timer: list[dict] = []
-    total_kr = 0.0
+    total_kr_forbrug = 0.0
     total_kwh = 0.0
     manglende_timer: list[str] = []
     spotpris_sum = 0.0
     spotpris_count = 0
 
-    all_hours = sorted(set(list(timeforbrug.keys()) + list(spotpriser.keys())))
-
-    for hour in all_hours:
+    for hour in sorted(set(list(timeforbrug.keys()) + list(spotpriser.keys()))):
         kwh = timeforbrug.get(hour)
         spot = spotpriser.get(hour)
 
@@ -291,27 +259,28 @@ async def get_maaned(
             continue
 
         nettarif = nettarif_for_hour(hour)
-        fast_tillæg = (ELAFGIFT_ORE + nettarif + ELSELSKAB_TILLÆG_ORE) / 100.0
-        pris_per_kwh = (spot + fast_tillæg) * (1 + MOMS)
+        pris_per_kwh = (spot + (fast_ore + nettarif) / 100.0) * (1 + MOMS)
         kr = round(kwh * pris_per_kwh, 4)
 
-        total_kr += kr
+        total_kr_forbrug += kr
         total_kwh += kwh
         spotpris_sum += spot
         spotpris_count += 1
 
-        timer.append(
-            {
-                "time": hour,
-                "kwh": round(kwh, 4),
-                "spotpris_kwh": round(spot, 6),
-                "nettarif_ore": nettarif,
-                "pris_per_kwh": round(pris_per_kwh, 4),
-                "kr": kr,
-            }
-        )
+        timer.append({
+            "time": hour,
+            "kwh": round(kwh, 4),
+            "spotpris_kwh": round(spot, 6),
+            "nettarif_ore": nettarif,
+            "pris_per_kwh": round(pris_per_kwh, 4),
+            "kr": kr,
+        })
 
     gns_spotpris = (spotpris_sum / spotpris_count) if spotpris_count else 0.0
+
+    # Abonnement tillægges inkl. moms
+    abonnement_inkl_moms = round(ABONNEMENT_KR * (1 + MOMS), 2)
+    total_kr = round(total_kr_forbrug + abonnement_inkl_moms, 2)
 
     return {
         "aar": aar,
@@ -320,7 +289,9 @@ async def get_maaned(
         "til": til,
         "zone": PRISZONE,
         "total_kwh": round(total_kwh, 3),
-        "total_kr": round(total_kr, 2),
+        "total_kr_forbrug": round(total_kr_forbrug, 2),
+        "abonnement_inkl_moms": abonnement_inkl_moms,
+        "total_kr": total_kr,
         "gns_spotpris_kwh": round(gns_spotpris, 6),
         "afgifter": {
             "elafgift_ore": ELAFGIFT_ORE,
@@ -328,7 +299,10 @@ async def get_maaned(
             "nettarif_t2_ore": NETTARIF_T2_ORE,
             "nettarif_t3_ore": NETTARIF_T3_ORE,
             "nettarif_t4_ore": NETTARIF_T4_ORE,
+            "systemtarif_ore": SYSTEMTARIF_ORE,
+            "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
             "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
+            "abonnement_kr": ABONNEMENT_KR,
             "moms_pct": MOMS * 100,
         },
         "timer": timer,
@@ -341,11 +315,16 @@ async def status():
     return {
         "status": "ok",
         "zone": PRISZONE,
-        "nettarif": {
-            "t1_00_06": NETTARIF_T1_ORE,
-            "t2_06_17": NETTARIF_T2_ORE,
-            "t3_17_21": NETTARIF_T3_ORE,
-            "t4_21_24": NETTARIF_T4_ORE,
+        "afgifter": {
+            "elafgift_ore": ELAFGIFT_ORE,
+            "nettarif_t1_00_06": NETTARIF_T1_ORE,
+            "nettarif_t2_06_17": NETTARIF_T2_ORE,
+            "nettarif_t3_17_21": NETTARIF_T3_ORE,
+            "nettarif_t4_21_24": NETTARIF_T4_ORE,
+            "systemtarif_ore": SYSTEMTARIF_ORE,
+            "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
+            "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
+            "abonnement_kr": ABONNEMENT_KR,
         },
     }
 
@@ -358,28 +337,18 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra}/{til}/Hour",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=body,
         )
 
     if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Eloverblik tidsseriedata fejl: {resp.status_code}",
-        )
+        raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code}")
 
-    result = resp.json().get("result", [])
-    return {"timeforbrug": parse_timeseries(result)}
+    return {"timeforbrug": parse_timeseries(resp.json().get("result", []))}
 
 
 async def _fetch_spotpriser_raw(fra: str, til: str) -> dict:
-    til_excl = (
-        datetime.strptime(til, "%Y-%m-%d") + timedelta(days=1)
-    ).strftime("%Y-%m-%d")
-
+    til_excl = (datetime.strptime(til, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
     params = {
         "start": f"{fra}T00:00",
         "end": f"{til_excl}T00:00",
@@ -392,20 +361,15 @@ async def _fetch_spotpriser_raw(fra: str, til: str) -> dict:
         resp = await client.get(ENERGIDATA_URL, params=params)
 
     if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Energi Data Service fejl: {resp.status_code}",
-        )
+        raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 
-    records = resp.json().get("records", [])
     priser: dict[str, float] = {}
-    for r in records:
+    for r in resp.json().get("records", []):
         hour_utc = r.get("HourUTC", "")
         if hour_utc:
             key = hour_utc.replace(" ", "T")
             if not key.endswith("Z"):
                 key += "Z"
-            spot_mwh = r.get("SpotPriceDKK") or 0.0
-            priser[key] = round(spot_mwh / 1000, 6)
+            priser[key] = round((r.get("SpotPriceDKK") or 0.0) / 1000, 6)
 
     return {"spotpriser": priser}
