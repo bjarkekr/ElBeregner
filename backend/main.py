@@ -50,6 +50,7 @@ app.add_middleware(
 )
 
 _token_cache: dict = {"token": None, "expires_at": None}
+_mp_cache: dict = {"mp_id": None}
 
 
 def check_api_key(x_api_key: Optional[str] = Header(default=None)):
@@ -115,6 +116,9 @@ async def get_access_token() -> str:
 
 
 async def get_metering_point_id(token: str) -> str:
+    if _mp_cache["mp_id"]:
+        return _mp_cache["mp_id"]
+
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
             f"{ELOVERBLIK_BASE}/meteringpoints/meteringpoints?includeAll=false",
@@ -130,7 +134,8 @@ async def get_metering_point_id(token: str) -> str:
     points = resp.json().get("result", [])
     if not points:
         raise HTTPException(status_code=404, detail="Ingen målepunkter fundet på kontoen.")
-    return points[0]["meteringPointId"]
+    _mp_cache["mp_id"] = points[0]["meteringPointId"]
+    return _mp_cache["mp_id"]
 
 
 def parse_timeseries(result: list) -> dict[str, float]:
