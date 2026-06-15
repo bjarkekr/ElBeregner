@@ -24,7 +24,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 
 # Config from environment
-ELOVERBLIK_TOKEN = os.getenv("ELOVERBLIK_TOKEN", "")
+ELOVERBLIK_TOKEN = os.getenv("ELOVERBLIK_TOKEN", "").strip()
 ELAFGIFT_ORE = float(os.getenv("ELAFGIFT_ORE", "76.1"))
 NETTARIF_T1_ORE = float(os.getenv("NETTARIF_T1_ORE", "30.0"))    # 00-06 lavlast
 NETTARIF_T2_ORE = float(os.getenv("NETTARIF_T2_ORE", "92.0"))    # 06-17 høj
