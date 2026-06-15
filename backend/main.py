@@ -343,19 +343,33 @@ async def get_maaned(
 
 @app.get("/api/debug/eloverblik")
 async def debug_eloverblik():
-    """Rådata fra eloverblik til fejlfinding."""
+    """Rådata fra eloverblik til fejlfinding — tester maj 2026."""
     token = await get_access_token()
     mp_id = await get_metering_point_id(token)
     body = {"meteringPoints": {"meteringPoint": [mp_id]}}
     fra = "2026-05-01"
-    til = "2026-05-03"
+    til = "2026-05-31"
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
             f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra}/{til}/Hour",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=body,
         )
-    return {"status": resp.status_code, "maalerid": mp_id, "raa_svar": resp.json()}
+    raw = resp.json()
+    parsed = parse_timeseries(raw.get("result", []))
+    # Spotpriser for maj
+    spot_resp = await _fetch_spotpriser_raw(fra, til)
+    spotpriser = spot_resp["spotpriser"]
+    matches = sum(1 for h in parsed if h in spotpriser)
+    return {
+        "status": resp.status_code,
+        "maalerid": mp_id,
+        "forbrug_timer": len(parsed),
+        "spotpris_timer": len(spotpriser),
+        "timer_med_begge": matches,
+        "foerste_forbrug_noegle": sorted(parsed.keys())[:3] if parsed else [],
+        "foerste_spot_noegle": sorted(spotpriser.keys())[:3] if spotpriser else [],
+    }
 
 
 @app.get("/api/status")
