@@ -457,6 +457,57 @@ async def get_priser_dag(
     }
 
 
+@app.get("/api/debug/forbrug")
+async def debug_forbrug(
+    dato: str = Query(...),
+    x_api_key: Optional[str] = Header(default=None),
+):
+    """Returnerer rå eloverblik-svar for én dag – til diagnostik."""
+    check_api_key(x_api_key)
+    dato_dt = datetime.strptime(dato, "%Y-%m-%d")
+    next_dato = dato_dt + timedelta(days=1)
+    next_dato_str = next_dato.strftime("%Y-%m-%d")
+
+    token = await get_access_token()
+    mp_id = await get_metering_point_id(token)
+    body = {"meteringPoints": {"meteringPoint": [mp_id]}}
+
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{dato}/{next_dato_str}/Hour",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=body,
+        )
+
+    raw = resp.json()
+    parsed = parse_timeseries(raw.get("result", []))
+
+    # Strukturanalyse uden at returnere alle data-værdier
+    result_items = raw.get("result", [])
+    struktur = []
+    for item in result_items:
+        doc = item.get("MyEnergyData_MarketDocument") or {}
+        for ts in (doc.get("TimeSeries") or []):
+            for period in (ts.get("Period") or []):
+                pts = period.get("Point") or []
+                struktur.append({
+                    "interval_start": (period.get("timeInterval") or {}).get("start"),
+                    "interval_end": (period.get("timeInterval") or {}).get("end"),
+                    "antal_punkter": len(pts),
+                    "første_punkt": pts[0] if pts else None,
+                })
+
+    return {
+        "kald": f"from={dato} to={next_dato_str}",
+        "http_status": resp.status_code,
+        "result_items": len(result_items),
+        "parsed_timer": len(parsed),
+        "parsed_kwh_total": round(sum(parsed.values()), 3),
+        "struktur": struktur,
+        "rå_result": result_items,
+    }
+
+
 @app.get("/api/status")
 async def status():
     db_ok = False

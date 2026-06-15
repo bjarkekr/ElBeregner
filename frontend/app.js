@@ -496,6 +496,26 @@ document.getElementById('settings-form').addEventListener('submit', (e) => {
   loadMaaned();
 });
 
+// ─── DEBUG ─────────────────────────────────────────────────────────────────
+document.getElementById('debug-dato').value = (() => {
+  const d = new Date();
+  d.setDate(d.getDate() - 3);
+  return d.toISOString().slice(0, 10);
+})();
+
+document.getElementById('debug-btn').addEventListener('click', async () => {
+  const dato = document.getElementById('debug-dato').value;
+  const out = document.getElementById('debug-output');
+  out.textContent = 'Henter…';
+  out.classList.remove('hidden');
+  try {
+    const data = await apiFetch(`/api/debug/forbrug?dato=${dato}`);
+    out.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    out.textContent = 'Fejl: ' + err.message;
+  }
+});
+
 // ─── Init ──────────────────────────────────────────────────────────────────
 function init() {
   updateMonthLabel();

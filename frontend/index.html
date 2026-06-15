@@ -180,6 +180,17 @@
         <div id="settings-feedback" class="feedback hidden"></div>
       </form>
 
+      <div class="settings-form" style="margin-top:16px">
+        <div class="settings-section-title">Diagnostik – test eloverblik</div>
+        <label>
+          Testdato
+          <input type="date" id="debug-dato" />
+          <small>Tjekker hvad eloverblik returnerer for én dag</small>
+        </label>
+        <button type="button" id="debug-btn" class="btn-secondary">Kør test</button>
+        <pre id="debug-output" class="debug-output hidden"></pre>
+      </div>
+
       <div class="info-box">
         <strong>Prisberegning pr. kWh:</strong><br/>
         (Spotpris + elafgift + nettarif + elselskabstillæg) × (1 + moms 25%)<br/>

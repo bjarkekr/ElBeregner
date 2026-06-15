@@ -460,6 +460,33 @@ tbody tr.pris-nu {
 .fark-dot.middel { background: #ffe082; }
 .fark-dot.dyr    { background: #ef9a9a; }
 
+.btn-secondary {
+  background: #fff;
+  color: var(--green);
+  border: 2px solid var(--green);
+  border-radius: 8px;
+  padding: 11px 22px;
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-secondary:hover { background: var(--green-pale); }
+
+.debug-output {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 8px;
+  padding: 14px;
+  font-size: 0.72rem;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 400px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
 /* RESPONSIVE */
 @media (max-width: 420px) {
   .tab { font-size: 0.78rem; padding: 12px 4px; }
