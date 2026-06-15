@@ -30,9 +30,9 @@ DK_TZ = ZoneInfo("Europe/Copenhagen")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if ALLOWED_ORIGIN == "*" else [ALLOWED_ORIGIN],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["GET"],
     allow_headers=["*"],
 )
 
