@@ -125,13 +125,17 @@ async def get_access_token() -> str:
         raise HTTPException(status_code=500, detail="ELOVERBLIK_TOKEN er ikke konfigureret på serveren.")
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"{ELOVERBLIK_BASE}/token",
-            headers={"Authorization": f"Bearer {ELOVERBLIK_TOKEN}"},
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Eloverblik token fejl: {resp.status_code}")
+        for forsøg in range(3):
+            resp = await client.get(
+                f"{ELOVERBLIK_BASE}/token",
+                headers={"Authorization": f"Bearer {ELOVERBLIK_TOKEN}"},
+            )
+            if resp.status_code == 200:
+                break
+            if forsøg < 2:
+                await asyncio.sleep(3)
+        else:
+            raise HTTPException(status_code=502, detail=f"Eloverblik token fejl: {resp.status_code} (3 forsøg)")
 
     token = resp.json().get("result")
     if not token:
@@ -147,13 +151,17 @@ async def get_metering_point_id(token: str) -> str:
         return _mp_cache["mp_id"]
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(
-            f"{ELOVERBLIK_BASE}/meteringpoints/meteringpoints?includeAll=false",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Eloverblik målepunkt fejl: {resp.status_code}")
+        for forsøg in range(3):
+            resp = await client.get(
+                f"{ELOVERBLIK_BASE}/meteringpoints/meteringpoints?includeAll=false",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            if resp.status_code == 200:
+                break
+            if forsøg < 2:
+                await asyncio.sleep(3)
+        else:
+            raise HTTPException(status_code=502, detail=f"Eloverblik målepunkt fejl: {resp.status_code} (3 forsøg)")
 
     points = resp.json().get("result", [])
     if not points:
