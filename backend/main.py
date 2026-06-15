@@ -559,31 +559,36 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
     mp_id = await get_metering_point_id(token)
     body = {"meteringPoints": {"meteringPoint": [mp_id]}}
 
-    # Hent én dag ad gangen for at undgå eloverblik's datalimit
+    # Hent i 14-dages blokke — eloverblik returnerer tom TimeSeries ved < 2-dages vinduer.
+    # chunk_end begrænses aldrig, men resultater filtreres til [fra, til_excl).
     fra_dt = datetime.strptime(fra, "%Y-%m-%d")
     til_dt = datetime.strptime(til, "%Y-%m-%d")
     consumption: dict[str, float] = {}
-    current_day = fra_dt
+    chunk_start = fra_dt
 
     async with httpx.AsyncClient(timeout=60) as client:
-        while current_day <= til_dt:
-            next_day = current_day + timedelta(days=1)
+        while chunk_start <= til_dt:
+            chunk_end = chunk_start + timedelta(days=14)
+            fra_s = chunk_start.strftime("%Y-%m-%d")
+            til_s = chunk_end.strftime("%Y-%m-%d")
             resp = await client.post(
-                f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{current_day.strftime('%Y-%m-%d')}/{next_day.strftime('%Y-%m-%d')}/Hour",
+                f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra_s}/{til_s}/Hour",
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                 json=body,
             )
             if resp.status_code == 503:
                 await asyncio.sleep(3)
                 resp = await client.post(
-                    f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{current_day.strftime('%Y-%m-%d')}/{next_day.strftime('%Y-%m-%d')}/Hour",
+                    f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra_s}/{til_s}/Hour",
                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                     json=body,
                 )
             if resp.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({current_day.strftime('%Y-%m-%d')}): {resp.text[:300]}")
-            consumption.update(parse_timeseries(resp.json().get("result", [])))
-            current_day = next_day
+                raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({fra_s}–{til_s}): {resp.text[:300]}")
+            for hour_key, kwh in parse_timeseries(resp.json().get("result", [])).items():
+                if fra <= hour_key[:10] < til_excl:
+                    consumption[hour_key] = consumption.get(hour_key, 0.0) + kwh
+            chunk_start = chunk_end
 
     await db_save_forbrug(consumption)
     return {"timeforbrug": consumption, "fra_cache": False}
