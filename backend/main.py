@@ -280,11 +280,12 @@ async def get_maaned(
     spotpris_sum = 0.0
     spotpris_count = 0
 
-    for hour in sorted(set(list(timeforbrug.keys()) + list(spotpriser.keys()))):
-        kwh = timeforbrug.get(hour)
+    # Iterer kun over timer med forbrugsdata — spotpriser kan have ekstra timer
+    for hour in sorted(timeforbrug.keys()):
+        kwh = timeforbrug[hour]
         spot = spotpriser.get(hour)
 
-        if kwh is None or spot is None:
+        if spot is None:
             manglende_timer.append(hour)
             continue
 
