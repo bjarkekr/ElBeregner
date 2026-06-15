@@ -549,10 +549,10 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
     til_dt = datetime.strptime(til, "%Y-%m-%d")
     til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Brug cache til afsluttede måneder
+    # Brug cache til afsluttede måneder — kræv mindst 24 timer for at undgå partial-cache
     if not is_current_month(fra):
         cached = await db_get_forbrug(fra, til_excl)
-        if cached:
+        if cached and len(cached) >= 24:
             return {"timeforbrug": cached, "fra_cache": True}
 
     token = await get_access_token()
@@ -598,10 +598,10 @@ async def _fetch_spotpriser_raw(fra: str, til: str, zone: str = PRISZONE) -> dic
     til_dt = datetime.strptime(til, "%Y-%m-%d")
     til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Brug cache til afsluttede måneder
+    # Brug cache til afsluttede måneder — kræv mindst 24 timer for at undgå partial-cache
     if not is_current_month(fra):
         cached = await db_get_spotpriser(fra, til_excl, zone)
-        if cached:
+        if cached and len(cached) >= 24:
             return {"spotpriser": cached}
 
     params = {
