@@ -443,6 +443,17 @@ async def get_priser_dag(
         "i_dag_timer": today_hours,
         "i_morgen_timer": tomorrow_hours,
         "i_morgen_tilgængelig": len(tomorrow_hours) > 0,
+        "afgifter": {
+            "elafgift_ore": ELAFGIFT_ORE,
+            "nettarif_t1_ore": NETTARIF_T1_ORE,
+            "nettarif_t2_ore": NETTARIF_T2_ORE,
+            "nettarif_t3_ore": NETTARIF_T3_ORE,
+            "nettarif_t4_ore": NETTARIF_T4_ORE,
+            "systemtarif_ore": SYSTEMTARIF_ORE,
+            "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
+            "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
+            "moms_pct": MOMS * 100,
+        },
     }
 
 

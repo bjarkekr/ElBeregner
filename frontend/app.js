@@ -382,7 +382,30 @@ function prisKlasse(value, alle) {
   return 'pris-dyr';
 }
 
-function renderPrisTabel(tbodyId, timer) {
+function buildTooltip(t, afgifter) {
+  const f = (v) => v.toLocaleString('da-DK', {minimumFractionDigits:1, maximumFractionDigits:1});
+  const spotOre = t.spot_dkk_kwh * 100;
+  const momsOeOreSpot = spotOre * (afgifter.moms_pct / 100);
+  const spotInklMoms = spotOre + momsOeOreSpot;
+  const total = t.total_dkk_kwh * 100;
+  const lines = [
+    `Spotpris:              ${f(spotOre)} øre`,
+    `  + moms (${f(afgifter.moms_pct)}%):     ${f(momsOeOreSpot)} øre`,
+    `  = spot inkl. moms:  ${f(spotInklMoms)} øre`,
+    ``,
+    `Elafgift:              ${f(afgifter.elafgift_ore)} øre`,
+    `Nettarif:              ${f(t.nettarif_ore)} øre`,
+    `Systemtarif:           ${f(afgifter.systemtarif_ore)} øre`,
+    `Transmissionstarif:    ${f(afgifter.transmissionstarif_ore)} øre`,
+  ];
+  if (afgifter.elselskab_tillæg_ore > 0) {
+    lines.push(`Elselskabstillæg:      ${f(afgifter.elselskab_tillæg_ore)} øre`);
+  }
+  lines.push(``, `I alt:                 ${f(total)} øre/kWh`);
+  return lines.join('\n');
+}
+
+function renderPrisTabel(tbodyId, timer, afgifter) {
   const tbody = document.getElementById(tbodyId);
   tbody.innerHTML = '';
   const alleTotal = timer.map(t => t.total_dkk_kwh);
@@ -392,11 +415,17 @@ function renderPrisTabel(tbodyId, timer) {
     const cls = prisKlasse(t.total_dkk_kwh, alleTotal);
     const tr = document.createElement('tr');
     tr.className = cls + (t.er_nu ? ' pris-nu' : '');
+
+    const totalTd = document.createElement('td');
+    totalTd.className = 'pris-tooltip';
+    totalTd.textContent = t.total_dkk_kwh.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2});
+    if (afgifter) totalTd.setAttribute('data-tooltip', buildTooltip(t, afgifter));
+
     tr.innerHTML = `
       <td>${tidLabel}${t.er_nu ? ' <span class="nu-badge">nu</span>' : ''}</td>
       <td>${(t.spot_dkk_kwh * 100).toLocaleString('da-DK', {minimumFractionDigits:1, maximumFractionDigits:1})}</td>
-      <td>${t.total_dkk_kwh.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2})}</td>
     `;
+    tr.appendChild(totalTd);
     tbody.appendChild(tr);
   });
 }
@@ -410,14 +439,14 @@ async function loadPriser() {
     const data = await apiFetch('/api/priser/dag');
 
     document.getElementById('priser-idag-label').textContent = formatDagLabel(data.i_dag);
-    renderPrisTabel('priser-idag-tbody', data.i_dag_timer);
+    renderPrisTabel('priser-idag-tbody', data.i_dag_timer, data.afgifter);
 
     document.getElementById('priser-imorgen-label').textContent = formatDagLabel(data.i_morgen);
 
     if (data.i_morgen_tilgængelig) {
       document.getElementById('priser-imorgen-mangler').classList.add('hidden');
       document.getElementById('priser-imorgen-tabel-wrap').classList.remove('hidden');
-      renderPrisTabel('priser-imorgen-tbody', data.i_morgen_timer);
+      renderPrisTabel('priser-imorgen-tbody', data.i_morgen_timer, data.afgifter);
     } else {
       const manglerEl = document.getElementById('priser-imorgen-mangler');
       manglerEl.textContent = 'Morgendagens priser offentliggøres normalt efter kl. 13:00.';

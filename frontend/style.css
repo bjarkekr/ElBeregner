@@ -233,7 +233,12 @@ main {
   background: var(--card-bg);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  overflow: hidden;
+  overflow: visible;
+}
+
+/* Keep border-radius clipping only on the table itself */
+.table-wrap table {
+  border-radius: var(--radius);
 }
 
 table {
@@ -392,6 +397,48 @@ tbody tr.pris-nu {
   margin-left: 4px;
   text-transform: uppercase;
   letter-spacing: 0.3px;
+}
+
+.pris-tooltip {
+  position: relative;
+  cursor: help;
+  text-decoration: underline dotted var(--text-muted);
+  text-underline-offset: 3px;
+}
+
+.pris-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  background: #1e1e1e;
+  color: #f0f0f0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  white-space: pre;
+  line-height: 1.7;
+  min-width: 240px;
+  z-index: 200;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+  font-family: monospace;
+}
+
+.pris-tooltip:hover::after {
+  opacity: 1;
+}
+
+/* Keep tooltip inside viewport on narrow screens */
+@media (max-width: 480px) {
+  .pris-tooltip::after {
+    right: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 210px;
+  }
 }
 
 .priser-forklaring {
