@@ -275,7 +275,7 @@ async function loadHistorik() {
 
   try {
     const results = await Promise.allSettled(
-      tasks.map(t => apiFetch(`/api/maaned?aar=${t.aar}&maaned=${t.maaned}`))
+      tasks.map(t => apiFetch(`/api/maaned?aar=${t.aar}&maaned=${t.maaned}&kun_cache=true`))
     );
 
     const rows = [];

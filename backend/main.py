@@ -287,6 +287,7 @@ async def get_spotpriser(
 async def get_maaned(
     aar: int = Query(...),
     maaned: int = Query(...),
+    kun_cache: bool = Query(False),
     x_api_key: Optional[str] = Header(default=None),
 ):
     check_api_key(x_api_key)
@@ -301,14 +302,20 @@ async def get_maaned(
 
     fra = fra_dt.strftime("%Y-%m-%d")
     til = til_dt.strftime("%Y-%m-%d")
+    til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    forbrug_data, spot_data = await asyncio.gather(
-        asyncio.create_task(_fetch_forbrug_raw(fra, til)),
-        asyncio.create_task(_fetch_spotpriser_raw(fra, til, PRISZONE)),
-    )
-
-    timeforbrug = forbrug_data["timeforbrug"]
-    spotpriser = spot_data["spotpriser"]
+    if kun_cache:
+        timeforbrug = await db_get_forbrug(fra, til_excl) or {}
+        spotpriser = await db_get_spotpriser(fra, til_excl, PRISZONE) or {}
+        if not timeforbrug:
+            raise HTTPException(status_code=404, detail="Ingen data i database for denne måned.")
+    else:
+        forbrug_data, spot_data = await asyncio.gather(
+            asyncio.create_task(_fetch_forbrug_raw(fra, til)),
+            asyncio.create_task(_fetch_spotpriser_raw(fra, til, PRISZONE)),
+        )
+        timeforbrug = forbrug_data["timeforbrug"]
+        spotpriser = spot_data["spotpriser"]
     fast_ore = ELAFGIFT_ORE + SYSTEMTARIF_ORE + TRANSMISSIONSTARIF_ORE + ELSELSKAB_TILLÆG_ORE
 
     timer = []
@@ -362,7 +369,7 @@ async def get_maaned(
             "abonnement_kr": ABONNEMENT_KR,
             "moms_pct": MOMS * 100,
         },
-        "fra_cache": forbrug_data.get("fra_cache", False),
+        "fra_cache": True if kun_cache else forbrug_data.get("fra_cache", False),
         "timer": timer,
         "manglende_timer_antal": len(manglende_timer),
     }
