@@ -255,6 +255,10 @@ async def get_maaned(
 
     fra_dt = datetime(aar, maaned, 1)
     til_dt = (datetime(aar, maaned + 1, 1) if maaned < 12 else datetime(aar + 1, 1, 1)) - timedelta(days=1)
+    # Begræns til i dag — eloverblik har ikke fremtidige data
+    today = datetime.utcnow().date()
+    if til_dt.date() > today:
+        til_dt = datetime.combine(today, datetime.min.time())
     fra = fra_dt.strftime("%Y-%m-%d")
     til = til_dt.strftime("%Y-%m-%d")
 
