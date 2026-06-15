@@ -341,6 +341,23 @@ async def get_maaned(
     }
 
 
+@app.get("/api/debug/eloverblik")
+async def debug_eloverblik():
+    """Rådata fra eloverblik til fejlfinding."""
+    token = await get_access_token()
+    mp_id = await get_metering_point_id(token)
+    body = {"meteringPoints": {"meteringPoint": [mp_id]}}
+    fra = "2026-05-01"
+    til = "2026-05-03"
+    async with httpx.AsyncClient(timeout=60) as client:
+        resp = await client.post(
+            f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra}/{til}/Hour",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=body,
+        )
+    return {"status": resp.status_code, "maalerid": mp_id, "raa_svar": resp.json()}
+
+
 @app.get("/api/status")
 async def status():
     return {
