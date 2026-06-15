@@ -67,7 +67,9 @@ function utcToHourLabel(isoUtc) {
 async function apiFetch(path) {
   const base = backendUrl();
   if (!base) throw new Error('Backend URL er ikke konfigureret. Gå til Indstillinger og angiv din Railway-URL.');
-  const resp = await fetch(base + path);
+  const headers = {};
+  if (settings.apiKey) headers['X-API-Key'] = settings.apiKey;
+  const resp = await fetch(base + path, { headers });
   if (!resp.ok) {
     let msg;
     try { msg = (await resp.json()).detail; } catch { msg = resp.statusText; }
@@ -366,12 +368,14 @@ function renderHistorik(rows) {
 // ─── INDSTILLINGER VIEW ────────────────────────────────────────────────────
 function loadSettingsForm() {
   document.getElementById('backend-url').value = settings.backendUrl || '';
+  document.getElementById('api-key').value = settings.apiKey || '';
   document.getElementById('priszone-select').value = settings.zone || 'DK1';
 }
 
 document.getElementById('settings-form').addEventListener('submit', (e) => {
   e.preventDefault();
   settings.backendUrl = document.getElementById('backend-url').value.trim();
+  settings.apiKey = document.getElementById('api-key').value.trim();
   settings.zone = document.getElementById('priszone-select').value;
   saveSettings(settings);
 

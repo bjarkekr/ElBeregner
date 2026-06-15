@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
 
+import secrets
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="ElBeregner API", version="1.0.0")
@@ -25,6 +26,7 @@ ABONNEMENT_KR = float(os.getenv("ABONNEMENT_KR", "38.0"))         # Fast månedl
 MOMS = float(os.getenv("MOMS", "0.25"))
 PRISZONE = os.getenv("PRISZONE", "DK1")
 ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
+API_KEY = os.getenv("API_KEY", "")
 
 DK_TZ = ZoneInfo("Europe/Copenhagen")
 
@@ -37,6 +39,13 @@ app.add_middleware(
 )
 
 _token_cache: dict = {"token": None, "expires_at": None}
+
+
+def check_api_key(x_api_key: Optional[str] = Header(default=None)):
+    if not API_KEY:
+        return  # Ingen nøgle konfigureret — åben adgang
+    if not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API-nøgle.")
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
 ENERGIDATA_URL = "https://api.energidataservice.dk/dataset/Elspotprices"
@@ -143,7 +152,9 @@ def parse_timeseries(result: list) -> dict[str, float]:
 async def get_forbrug(
     fra: str = Query(..., description="YYYY-MM-DD"),
     til: str = Query(..., description="YYYY-MM-DD"),
+    x_api_key: Optional[str] = Header(default=None),
 ):
+    check_api_key(x_api_key)
     try:
         datetime.strptime(fra, "%Y-%m-%d")
         datetime.strptime(til, "%Y-%m-%d")
@@ -182,7 +193,9 @@ async def get_spotpriser(
     fra: str = Query(..., description="YYYY-MM-DD"),
     til: str = Query(..., description="YYYY-MM-DD"),
     zone: Optional[str] = Query(None, description="DK1 eller DK2"),
+    x_api_key: Optional[str] = Header(default=None),
 ):
+    check_api_key(x_api_key)
     try:
         datetime.strptime(fra, "%Y-%m-%d")
         datetime.strptime(til, "%Y-%m-%d")
@@ -222,8 +235,10 @@ async def get_spotpriser(
 async def get_maaned(
     aar: int = Query(..., description="Årstal, f.eks. 2024"),
     maaned: int = Query(..., description="Måned 1-12"),
+    x_api_key: Optional[str] = Header(default=None),
 ):
     """Beregn samlet månedspris inkl. alle afgifter og abonnement."""
+    check_api_key(x_api_key)
     if not (1 <= maaned <= 12):
         raise HTTPException(status_code=400, detail="Måned skal være 1-12")
 
