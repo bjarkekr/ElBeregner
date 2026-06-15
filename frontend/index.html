@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#2e7d32" />
+  <meta name="description" content="Tracker dit danske elforbrug og beregner din månedlige elregning" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Elforbrug" />
+  <title>Elforbrug</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">⚡ Elforbrug</span>
+      <span id="zone-badge" class="zone-badge">DK1</span>
+    </div>
+  </header>
+
+  <nav class="tab-bar">
+    <button class="tab active" data-tab="maaned">Måned</button>
+    <button class="tab" data-tab="historik">Historik</button>
+    <button class="tab" data-tab="indstillinger">Indstillinger</button>
+  </nav>
+
+  <main>
+    <!-- MÅNED VIEW -->
+    <section id="tab-maaned" class="tab-content active">
+      <div class="month-picker">
+        <button id="prev-month" class="nav-btn" aria-label="Forrige måned">&#8249;</button>
+        <span id="month-label" class="month-label"></span>
+        <button id="next-month" class="nav-btn" aria-label="Næste måned">&#8250;</button>
+      </div>
+
+      <div id="maaned-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter data…</p></div>
+      <div id="maaned-error" class="error-box hidden"></div>
+
+      <div id="maaned-content" class="hidden">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-kwh">—</div>
+            <div class="stat-label">kWh forbrug</div>
+          </div>
+          <div class="stat-card highlight">
+            <div class="stat-value" id="stat-kr">—</div>
+            <div class="stat-label">kr. i alt</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-spot">—</div>
+            <div class="stat-label">gns. spotpris</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-timer">—</div>
+            <div class="stat-label">timer med data</div>
+          </div>
+        </div>
+
+        <div class="chart-wrap">
+          <canvas id="maaned-chart"></canvas>
+        </div>
+
+        <div id="manglende-advarsel" class="warning-box hidden"></div>
+      </div>
+    </section>
+
+    <!-- HISTORIK VIEW -->
+    <section id="tab-historik" class="tab-content hidden">
+      <h2 class="section-title">Seneste 12 måneder</h2>
+
+      <div id="historik-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter historik…</p></div>
+      <div id="historik-error" class="error-box hidden"></div>
+
+      <div id="historik-content" class="hidden">
+        <div class="chart-wrap">
+          <canvas id="historik-chart"></canvas>
+        </div>
+        <div class="table-wrap">
+          <table id="historik-tabel">
+            <thead>
+              <tr>
+                <th>Måned</th>
+                <th>kWh</th>
+                <th>Gns. spot</th>
+                <th>Total kr.</th>
+              </tr>
+            </thead>
+            <tbody id="historik-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- INDSTILLINGER VIEW -->
+    <section id="tab-indstillinger" class="tab-content hidden">
+      <h2 class="section-title">Indstillinger</h2>
+      <form id="settings-form" class="settings-form">
+        <label>
+          Backend URL
+          <input type="url" id="backend-url" placeholder="https://din-api.railway.app" />
+          <small>URL til din Railway backend (uden trailing slash)</small>
+        </label>
+
+        <label>
+          Priszone
+          <select id="priszone-select">
+            <option value="DK1">DK1 – Jylland og Fyn</option>
+            <option value="DK2">DK2 – Sjælland</option>
+          </select>
+        </label>
+
+        <div class="settings-section-title">Afgifter (øre/kWh)</div>
+
+        <label>
+          Elafgift
+          <input type="number" id="elafgift" step="0.1" />
+        </label>
+        <label>
+          Nettarif
+          <input type="number" id="nettarif" step="0.1" />
+        </label>
+        <label>
+          Elselskabstillæg
+          <input type="number" id="elselskab" step="0.1" />
+        </label>
+
+        <button type="submit" class="btn-primary">Gem indstillinger</button>
+        <div id="settings-feedback" class="feedback hidden"></div>
+      </form>
+
+      <div class="info-box">
+        <strong>Prisberegning pr. kWh:</strong><br/>
+        (Spotpris + elafgift + nettarif + elselskabstillæg) × (1 + moms 25%)<br/>
+        <em>Tillæg hentes fra backend; de lokale værdier ovenfor er kun til reference.</em>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
