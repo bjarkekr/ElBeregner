@@ -1,43 +1,35 @@
 import os
 import json
 import asyncio
+import secrets
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from typing import Optional
 
-import secrets
+import asyncpg
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
-
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 app = FastAPI(title="ElBeregner API", version="1.0.0")
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    return JSONResponse(
-        status_code=500,
-        content={"detail": f"Serverfejl: {type(exc).__name__}: {str(exc)}"},
-        headers={"Access-Control-Allow-Origin": "*"},
-    )
-
 # Config from environment
 ELOVERBLIK_TOKEN = os.getenv("ELOVERBLIK_TOKEN", "").strip()
 ELAFGIFT_ORE = float(os.getenv("ELAFGIFT_ORE", "76.1"))
-NETTARIF_T1_ORE = float(os.getenv("NETTARIF_T1_ORE", "30.0"))    # 00-06 lavlast
-NETTARIF_T2_ORE = float(os.getenv("NETTARIF_T2_ORE", "92.0"))    # 06-17 høj
-NETTARIF_T3_ORE = float(os.getenv("NETTARIF_T3_ORE", "318.0"))   # 17-21 spidslast
-NETTARIF_T4_ORE = float(os.getenv("NETTARIF_T4_ORE", "92.0"))    # 21-24 høj
-SYSTEMTARIF_ORE = float(os.getenv("SYSTEMTARIF_ORE", "6.0"))      # Energinet systemtarif
-TRANSMISSIONSTARIF_ORE = float(os.getenv("TRANSMISSIONSTARIF_ORE", "4.9"))  # Energinet transmissionstarif
+NETTARIF_T1_ORE = float(os.getenv("NETTARIF_T1_ORE", "30.0"))
+NETTARIF_T2_ORE = float(os.getenv("NETTARIF_T2_ORE", "92.0"))
+NETTARIF_T3_ORE = float(os.getenv("NETTARIF_T3_ORE", "318.0"))
+NETTARIF_T4_ORE = float(os.getenv("NETTARIF_T4_ORE", "92.0"))
+SYSTEMTARIF_ORE = float(os.getenv("SYSTEMTARIF_ORE", "6.0"))
+TRANSMISSIONSTARIF_ORE = float(os.getenv("TRANSMISSIONSTARIF_ORE", "4.9"))
 ELSELSKAB_TILLÆG_ORE = float(os.getenv("ELSELSKAB_TILLÆG_ORE", "0.0"))
-ABONNEMENT_KR = float(os.getenv("ABONNEMENT_KR", "38.0"))         # Fast månedligt abonnement
+ABONNEMENT_KR = float(os.getenv("ABONNEMENT_KR", "38.0"))
 MOMS = float(os.getenv("MOMS", "0.25"))
 PRISZONE = os.getenv("PRISZONE", "DK1")
-ALLOWED_ORIGIN = os.getenv("ALLOWED_ORIGIN", "*")
 API_KEY = os.getenv("API_KEY", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 DK_TZ = ZoneInfo("Europe/Copenhagen")
 
@@ -51,20 +43,53 @@ app.add_middleware(
 
 _token_cache: dict = {"token": None, "expires_at": None}
 _mp_cache: dict = {"mp_id": None}
-
-
-def check_api_key(x_api_key: Optional[str] = Header(default=None)):
-    if not API_KEY:
-        return  # Ingen nøgle konfigureret — åben adgang
-    if not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
-        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API-nøgle.")
+_db_pool: Optional[asyncpg.Pool] = None
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
 ENERGIDATA_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
 
 
+@app.on_event("startup")
+async def startup():
+    global _db_pool
+    if DATABASE_URL:
+        url = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+        _db_pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
+        async with _db_pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS forbrug (
+                    hour_utc TEXT PRIMARY KEY,
+                    kwh REAL NOT NULL
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS spotpriser (
+                    hour_utc TEXT NOT NULL,
+                    zone TEXT NOT NULL,
+                    pris_dkk_kwh REAL NOT NULL,
+                    PRIMARY KEY (hour_utc, zone)
+                )
+            """)
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if _db_pool:
+        await _db_pool.close()
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Serverfejl: {type(exc).__name__}: {str(exc)}"},
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
+
+
+# ─── Helpers ────────────────────────────────────────────────────────────────
+
 def nettarif_for_hour(utc_iso: str) -> float:
-    """Returnerer nettarif i øre/kWh baseret på dansk lokaltid."""
     dt_utc = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
     dt_dk = dt_utc.astimezone(DK_TZ)
     h = dt_dk.hour
@@ -78,20 +103,26 @@ def nettarif_for_hour(utc_iso: str) -> float:
         return NETTARIF_T4_ORE
 
 
+def check_api_key(x_api_key: Optional[str]):
+    if not API_KEY:
+        return
+    if not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
+        raise HTTPException(status_code=401, detail="Ugyldig eller manglende API-nøgle.")
+
+
+def is_current_month(fra: str) -> bool:
+    now = datetime.utcnow()
+    fra_dt = datetime.strptime(fra, "%Y-%m-%d")
+    return fra_dt.year == now.year and fra_dt.month == now.month
+
+
 async def get_access_token() -> str:
     now = datetime.utcnow()
-    if (
-        _token_cache["token"]
-        and _token_cache["expires_at"]
-        and now < _token_cache["expires_at"]
-    ):
+    if _token_cache["token"] and _token_cache["expires_at"] and now < _token_cache["expires_at"]:
         return _token_cache["token"]
 
     if not ELOVERBLIK_TOKEN:
-        raise HTTPException(
-            status_code=500,
-            detail="ELOVERBLIK_TOKEN er ikke konfigureret på serveren.",
-        )
+        raise HTTPException(status_code=500, detail="ELOVERBLIK_TOKEN er ikke konfigureret på serveren.")
 
     async with httpx.AsyncClient(timeout=30) as client:
         resp = await client.get(
@@ -100,13 +131,9 @@ async def get_access_token() -> str:
         )
 
     if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Eloverblik returnerede fejl ved token-hentning: {resp.status_code}",
-        )
+        raise HTTPException(status_code=502, detail=f"Eloverblik token fejl: {resp.status_code}")
 
-    data = resp.json()
-    token = data.get("result")
+    token = resp.json().get("result")
     if not token:
         raise HTTPException(status_code=502, detail="Eloverblik returnerede intet token.")
 
@@ -126,14 +153,12 @@ async def get_metering_point_id(token: str) -> str:
         )
 
     if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Eloverblik målepunkt fejl: {resp.status_code}",
-        )
+        raise HTTPException(status_code=502, detail=f"Eloverblik målepunkt fejl: {resp.status_code}")
 
     points = resp.json().get("result", [])
     if not points:
         raise HTTPException(status_code=404, detail="Ingen målepunkter fundet på kontoen.")
+
     _mp_cache["mp_id"] = points[0]["meteringPointId"]
     return _mp_cache["mp_id"]
 
@@ -158,16 +183,61 @@ def parse_timeseries(result: list) -> dict[str, float]:
                         kwh = float(qty_raw)
                     except ValueError:
                         kwh = 0.0
-                    hour_dt = start_dt + timedelta(hours=pos)
-                    key = hour_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    key = (start_dt + timedelta(hours=pos)).strftime("%Y-%m-%dT%H:%M:%SZ")
                     consumption[key] = consumption.get(key, 0.0) + kwh
     return consumption
 
 
+# ─── DB helpers ─────────────────────────────────────────────────────────────
+
+async def db_get_forbrug(fra: str, til_excl: str) -> dict[str, float] | None:
+    if not _db_pool:
+        return None
+    async with _db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT hour_utc, kwh FROM forbrug WHERE hour_utc >= $1 AND hour_utc < $2 ORDER BY hour_utc",
+            fra + "T00:00:00Z", til_excl + "T00:00:00Z"
+        )
+    return {r["hour_utc"]: r["kwh"] for r in rows} if rows else None
+
+
+async def db_save_forbrug(data: dict[str, float]):
+    if not _db_pool or not data:
+        return
+    async with _db_pool.acquire() as conn:
+        await conn.executemany(
+            "INSERT INTO forbrug (hour_utc, kwh) VALUES ($1, $2) ON CONFLICT (hour_utc) DO UPDATE SET kwh = $2",
+            list(data.items())
+        )
+
+
+async def db_get_spotpriser(fra: str, til_excl: str, zone: str) -> dict[str, float] | None:
+    if not _db_pool:
+        return None
+    async with _db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT hour_utc, pris_dkk_kwh FROM spotpriser WHERE hour_utc >= $1 AND hour_utc < $2 AND zone = $3 ORDER BY hour_utc",
+            fra + "T00:00:00Z", til_excl + "T00:00:00Z", zone
+        )
+    return {r["hour_utc"]: r["pris_dkk_kwh"] for r in rows} if rows else None
+
+
+async def db_save_spotpriser(data: dict[str, float], zone: str):
+    if not _db_pool or not data:
+        return
+    async with _db_pool.acquire() as conn:
+        await conn.executemany(
+            "INSERT INTO spotpriser (hour_utc, zone, pris_dkk_kwh) VALUES ($1, $2, $3) ON CONFLICT (hour_utc, zone) DO UPDATE SET pris_dkk_kwh = $3",
+            [(k, zone, v) for k, v in data.items()]
+        )
+
+
+# ─── API endpoints ──────────────────────────────────────────────────────────
+
 @app.get("/api/forbrug")
 async def get_forbrug(
-    fra: str = Query(..., description="YYYY-MM-DD"),
-    til: str = Query(..., description="YYYY-MM-DD"),
+    fra: str = Query(...),
+    til: str = Query(...),
     x_api_key: Optional[str] = Header(default=None),
 ):
     check_api_key(x_api_key)
@@ -177,38 +247,20 @@ async def get_forbrug(
     except ValueError:
         raise HTTPException(status_code=400, detail="Dato skal være YYYY-MM-DD")
 
-    token = await get_access_token()
-    mp_id = await get_metering_point_id(token)
-    body = {"meteringPoints": {"meteringPoint": [mp_id]}}
-
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra}/{til}/Hour",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json=body,
-        )
-
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} - {resp.text[:300]}",
-        )
-
-    consumption = parse_timeseries(resp.json().get("result", []))
+    data = await _fetch_forbrug_raw(fra, til)
     return {
-        "fra": fra,
-        "til": til,
-        "maalerid": mp_id,
-        "timeforbrug": consumption,
-        "total_kwh": round(sum(consumption.values()), 3),
+        "fra": fra, "til": til,
+        "timeforbrug": data["timeforbrug"],
+        "total_kwh": round(sum(data["timeforbrug"].values()), 3),
+        "fra_cache": data.get("fra_cache", False),
     }
 
 
 @app.get("/api/spotpriser")
 async def get_spotpriser(
-    fra: str = Query(..., description="YYYY-MM-DD"),
-    til: str = Query(..., description="YYYY-MM-DD"),
-    zone: Optional[str] = Query(None, description="DK1 eller DK2"),
+    fra: str = Query(...),
+    til: str = Query(...),
+    zone: Optional[str] = Query(None),
     x_api_key: Optional[str] = Header(default=None),
 ):
     check_api_key(x_api_key)
@@ -219,91 +271,58 @@ async def get_spotpriser(
         raise HTTPException(status_code=400, detail="Dato skal være YYYY-MM-DD")
 
     pris_zone = zone or PRISZONE
-    til_excl = (datetime.strptime(til, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-
-    params = {
-        "start": f"{fra}T00:00",
-        "end": f"{til_excl}T00:00",
-        "filter": json.dumps({"PriceArea": pris_zone}),
-        "sort": "TimeUTC asc",
-        "limit": 4000,
-    }
-
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(ENERGIDATA_URL, params=params)
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
-
-    # Aggreger 15-min priser (DKK/MWh) til timepris (DKK/kWh)
-    summer: dict[str, list] = {}
-    for r in resp.json().get("records", []):
-        t = r.get("TimeUTC", "")
-        if t:
-            key = t[:13].replace(" ", "T") + ":00:00Z"
-            summer.setdefault(key, []).append(r.get("DayAheadPriceDKK") or 0.0)
-    priser = {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
-
-    return {"fra": fra, "til": til, "zone": pris_zone, "spotpriser": priser}
+    data = await _fetch_spotpriser_raw(fra, til, pris_zone)
+    return {"fra": fra, "til": til, "zone": pris_zone, "spotpriser": data["spotpriser"]}
 
 
 @app.get("/api/maaned")
 async def get_maaned(
-    aar: int = Query(..., description="Årstal, f.eks. 2024"),
-    maaned: int = Query(..., description="Måned 1-12"),
+    aar: int = Query(...),
+    maaned: int = Query(...),
     x_api_key: Optional[str] = Header(default=None),
 ):
-    """Beregn samlet månedspris inkl. alle afgifter og abonnement."""
     check_api_key(x_api_key)
     if not (1 <= maaned <= 12):
         raise HTTPException(status_code=400, detail="Måned skal være 1-12")
 
     fra_dt = datetime(aar, maaned, 1)
     til_dt = (datetime(aar, maaned + 1, 1) if maaned < 12 else datetime(aar + 1, 1, 1)) - timedelta(days=1)
-    # Begræns til i dag — eloverblik har ikke fremtidige data
     today = datetime.utcnow().date()
     if til_dt.date() > today:
         til_dt = datetime.combine(today, datetime.min.time())
+
     fra = fra_dt.strftime("%Y-%m-%d")
     til = til_dt.strftime("%Y-%m-%d")
 
     forbrug_data, spot_data = await asyncio.gather(
         asyncio.create_task(_fetch_forbrug_raw(fra, til)),
-        asyncio.create_task(_fetch_spotpriser_raw(fra, til)),
+        asyncio.create_task(_fetch_spotpriser_raw(fra, til, PRISZONE)),
     )
 
     timeforbrug = forbrug_data["timeforbrug"]
     spotpriser = spot_data["spotpriser"]
-
-    # Fast tillæg pr. kWh (uden nettarif, som er tidsafhængig)
     fast_ore = ELAFGIFT_ORE + SYSTEMTARIF_ORE + TRANSMISSIONSTARIF_ORE + ELSELSKAB_TILLÆG_ORE
 
-    timer: list[dict] = []
+    timer = []
     total_kr_forbrug = 0.0
     total_kwh = 0.0
-    manglende_timer: list[str] = []
+    manglende_timer = []
     spotpris_sum = 0.0
     spotpris_count = 0
 
-    # Iterer kun over timer med forbrugsdata — spotpriser kan have ekstra timer
     for hour in sorted(timeforbrug.keys()):
         kwh = timeforbrug[hour]
         spot = spotpriser.get(hour)
-
         if spot is None:
             manglende_timer.append(hour)
             continue
-
         nettarif = nettarif_for_hour(hour)
-        # Spotpris er ekskl. moms; brugerens tariffer er inkl. moms
         pris_per_kwh = spot * (1 + MOMS) + (fast_ore + nettarif) / 100.0
         kr = round(kwh * pris_per_kwh, 4)
-
         total_kr_forbrug += kr
         total_kwh += kwh
         spotpris_sum += spot
         spotpris_count += 1
-
         timer.append({
             "time": hour,
             "kwh": round(kwh, 4),
@@ -314,16 +333,10 @@ async def get_maaned(
         })
 
     gns_spotpris = (spotpris_sum / spotpris_count) if spotpris_count else 0.0
-
-    # Abonnement er allerede inkl. moms
     total_kr = round(total_kr_forbrug + ABONNEMENT_KR, 2)
 
     return {
-        "aar": aar,
-        "maaned": maaned,
-        "fra": fra,
-        "til": til,
-        "zone": PRISZONE,
+        "aar": aar, "maaned": maaned, "fra": fra, "til": til, "zone": PRISZONE,
         "total_kwh": round(total_kwh, 3),
         "total_kr_forbrug": round(total_kr_forbrug, 2),
         "abonnement_kr": ABONNEMENT_KR,
@@ -341,47 +354,26 @@ async def get_maaned(
             "abonnement_kr": ABONNEMENT_KR,
             "moms_pct": MOMS * 100,
         },
+        "fra_cache": forbrug_data.get("fra_cache", False),
         "timer": timer,
         "manglende_timer_antal": len(manglende_timer),
     }
 
 
-@app.get("/api/debug/eloverblik")
-async def debug_eloverblik():
-    """Rådata fra eloverblik til fejlfinding — tester maj 2026."""
-    token = await get_access_token()
-    mp_id = await get_metering_point_id(token)
-    body = {"meteringPoints": {"meteringPoint": [mp_id]}}
-    fra = "2026-05-01"
-    til = "2026-05-31"
-    async with httpx.AsyncClient(timeout=60) as client:
-        resp = await client.post(
-            f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra}/{til}/Hour",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json=body,
-        )
-    raw = resp.json()
-    parsed = parse_timeseries(raw.get("result", []))
-    # Spotpriser for maj
-    spot_resp = await _fetch_spotpriser_raw(fra, til)
-    spotpriser = spot_resp["spotpriser"]
-    matches = sum(1 for h in parsed if h in spotpriser)
-    return {
-        "status": resp.status_code,
-        "maalerid": mp_id,
-        "forbrug_timer": len(parsed),
-        "spotpris_timer": len(spotpriser),
-        "timer_med_begge": matches,
-        "foerste_forbrug_noegle": sorted(parsed.keys())[:3] if parsed else [],
-        "foerste_spot_noegle": sorted(spotpriser.keys())[:3] if spotpriser else [],
-    }
-
-
 @app.get("/api/status")
 async def status():
+    db_ok = False
+    if _db_pool:
+        try:
+            async with _db_pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            db_ok = True
+        except Exception:
+            pass
     return {
         "status": "ok",
         "zone": PRISZONE,
+        "database": "tilsluttet" if db_ok else "ikke konfigureret",
         "afgifter": {
             "elafgift_ore": ELAFGIFT_ORE,
             "nettarif_t1_00_06": NETTARIF_T1_ORE,
@@ -396,7 +388,18 @@ async def status():
     }
 
 
+# ─── Internal fetch helpers ──────────────────────────────────────────────────
+
 async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
+    til_dt = datetime.strptime(til, "%Y-%m-%d")
+    til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Brug cache til afsluttede måneder
+    if not is_current_month(fra):
+        cached = await db_get_forbrug(fra, til_excl)
+        if cached:
+            return {"timeforbrug": cached, "fra_cache": True}
+
     token = await get_access_token()
     mp_id = await get_metering_point_id(token)
     body = {"meteringPoints": {"meteringPoint": [mp_id]}}
@@ -411,15 +414,25 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code}")
 
-    return {"timeforbrug": parse_timeseries(resp.json().get("result", []))}
+    consumption = parse_timeseries(resp.json().get("result", []))
+    await db_save_forbrug(consumption)
+    return {"timeforbrug": consumption, "fra_cache": False}
 
 
-async def _fetch_spotpriser_raw(fra: str, til: str) -> dict:
-    til_excl = (datetime.strptime(til, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+async def _fetch_spotpriser_raw(fra: str, til: str, zone: str = PRISZONE) -> dict:
+    til_dt = datetime.strptime(til, "%Y-%m-%d")
+    til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Brug cache til afsluttede måneder
+    if not is_current_month(fra):
+        cached = await db_get_spotpriser(fra, til_excl, zone)
+        if cached:
+            return {"spotpriser": cached}
+
     params = {
         "start": f"{fra}T00:00",
         "end": f"{til_excl}T00:00",
-        "filter": json.dumps({"PriceArea": PRISZONE}),
+        "filter": json.dumps({"PriceArea": zone}),
         "sort": "TimeUTC asc",
         "limit": 4000,
     }
@@ -438,4 +451,5 @@ async def _fetch_spotpriser_raw(fra: str, til: str) -> dict:
             summer.setdefault(key, []).append(r.get("DayAheadPriceDKK") or 0.0)
     priser = {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
 
+    await db_save_spotpriser(priser, zone)
     return {"spotpriser": priser}
