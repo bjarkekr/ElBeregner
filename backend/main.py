@@ -295,9 +295,9 @@ async def get_maaned(
 
     fra_dt = datetime(aar, maaned, 1)
     til_dt = (datetime(aar, maaned + 1, 1) if maaned < 12 else datetime(aar + 1, 1, 1)) - timedelta(days=1)
-    today = datetime.utcnow().date()
-    if til_dt.date() > today:
-        til_dt = datetime.combine(today, datetime.min.time())
+    yesterday = (datetime.utcnow() - timedelta(days=1)).date()
+    if til_dt.date() > yesterday:
+        til_dt = datetime.combine(yesterday, datetime.min.time())
 
     fra = fra_dt.strftime("%Y-%m-%d")
     til = til_dt.strftime("%Y-%m-%d")
@@ -421,6 +421,8 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
     async with httpx.AsyncClient(timeout=60) as client:
         while chunk_start <= til_dt:
             chunk_end = min(chunk_start + timedelta(days=13), til_dt)
+            if chunk_start == chunk_end:
+                break  # eloverblik tillader ikke samme fra- og til-dato
             resp = await client.post(
                 f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{chunk_start.strftime('%Y-%m-%d')}/{chunk_end.strftime('%Y-%m-%d')}/Hour",
                 headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
