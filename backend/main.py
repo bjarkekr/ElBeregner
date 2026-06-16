@@ -17,15 +17,17 @@ app = FastAPI(title="ElBeregner API", version="2.0.0")
 
 # Config from environment
 ELOVERBLIK_TOKEN = os.getenv("ELOVERBLIK_TOKEN", "").strip()
-ELAFGIFT_ORE = float(os.getenv("ELAFGIFT_ORE", "76.1"))
+ELAFGIFT_ORE = float(os.getenv("ELAFGIFT_ORE", "1.0"))
 NETTARIF_T1_ORE = float(os.getenv("NETTARIF_T1_ORE", "30.0"))
 NETTARIF_T2_ORE = float(os.getenv("NETTARIF_T2_ORE", "92.0"))
 NETTARIF_T3_ORE = float(os.getenv("NETTARIF_T3_ORE", "318.0"))
 NETTARIF_T4_ORE = float(os.getenv("NETTARIF_T4_ORE", "92.0"))
-SYSTEMTARIF_ORE = float(os.getenv("SYSTEMTARIF_ORE", "6.0"))
-TRANSMISSIONSTARIF_ORE = float(os.getenv("TRANSMISSIONSTARIF_ORE", "4.9"))
+SYSTEMTARIF_ORE = float(os.getenv("SYSTEMTARIF_ORE", "9.0"))
+TRANSMISSIONSTARIF_ORE = float(os.getenv("TRANSMISSIONSTARIF_ORE", "5.37"))
 ELSELSKAB_TILLÆG_ORE = float(os.getenv("ELSELSKAB_TILLÆG_ORE", "0.0"))
 ABONNEMENT_KR = float(os.getenv("ABONNEMENT_KR", "38.0"))
+TSO_ABONNEMENT_KR = float(os.getenv("TSO_ABONNEMENT_KR", "19.0"))  # TSO System Abonnement
+NET_ABO_KR = float(os.getenv("NET_ABO_KR", "63.0"))                # Net abo C egenproducent
 MOMS = float(os.getenv("MOMS", "0.25"))
 PRISZONE = os.getenv("PRISZONE", "DK1")
 API_KEY = os.getenv("API_KEY", "")
@@ -356,6 +358,7 @@ async def get_maaned(
             manglende_timer.append(hour)
             continue
         nettarif = nettarif_for_hour(hour)
+        # spot er fra markedet ekskl. moms; øvrige tariffer er inkl. moms (forbrugerpris)
         pris_per_kwh = spot * (1 + MOMS) + (fast_ore + nettarif) / 100.0
         kr = round(kwh * pris_per_kwh, 4)
         total_kr_forbrug += kr
@@ -375,7 +378,8 @@ async def get_maaned(
     total_prod_kwh = round(sum(timeprod.values()), 3)
     netto_kwh = round(total_forbrug_kwh - total_prod_kwh, 3)
     gns_spotpris = (spotpris_sum / spotpris_count) if spotpris_count else 0.0
-    total_kr = round(total_kr_forbrug + ABONNEMENT_KR, 2)
+    total_fast_kr = ABONNEMENT_KR + TSO_ABONNEMENT_KR + NET_ABO_KR
+    total_kr = round(total_kr_forbrug + total_fast_kr, 2)
 
     return {
         "aar": aar, "maaned": maaned, "fra": fra, "til": til, "zone": PRISZONE,
@@ -385,6 +389,9 @@ async def get_maaned(
         "total_kwh": round(total_forbrug_kwh, 3),  # backward compat
         "total_kr_forbrug": round(total_kr_forbrug, 2),
         "abonnement_kr": ABONNEMENT_KR,
+        "tso_abonnement_kr": TSO_ABONNEMENT_KR,
+        "net_abo_kr": NET_ABO_KR,
+        "total_fast_kr": round(total_fast_kr, 2),
         "total_kr": total_kr,
         "gns_spotpris_kwh": round(gns_spotpris, 6),
         "afgifter": {
@@ -397,6 +404,8 @@ async def get_maaned(
             "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
             "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
             "abonnement_kr": ABONNEMENT_KR,
+            "tso_abonnement_kr": TSO_ABONNEMENT_KR,
+            "net_abo_kr": NET_ABO_KR,
             "moms_pct": MOMS * 100,
         },
         "fra_cache": fra_cache,
@@ -487,6 +496,9 @@ async def get_priser_dag(
             "systemtarif_ore": SYSTEMTARIF_ORE,
             "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
             "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
+            "abonnement_kr": ABONNEMENT_KR,
+            "tso_abonnement_kr": TSO_ABONNEMENT_KR,
+            "net_abo_kr": NET_ABO_KR,
             "moms_pct": MOMS * 100,
         },
     }
@@ -574,14 +586,16 @@ async def status():
         "database": "tilsluttet" if db_ok else "ikke konfigureret",
         "afgifter": {
             "elafgift_ore": ELAFGIFT_ORE,
-            "nettarif_t1_00_06": NETTARIF_T1_ORE,
-            "nettarif_t2_06_17": NETTARIF_T2_ORE,
-            "nettarif_t3_17_21": NETTARIF_T3_ORE,
-            "nettarif_t4_21_24": NETTARIF_T4_ORE,
+            "nettarif_t1_ore": NETTARIF_T1_ORE,
+            "nettarif_t2_ore": NETTARIF_T2_ORE,
+            "nettarif_t3_ore": NETTARIF_T3_ORE,
+            "nettarif_t4_ore": NETTARIF_T4_ORE,
             "systemtarif_ore": SYSTEMTARIF_ORE,
             "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
             "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
             "abonnement_kr": ABONNEMENT_KR,
+            "tso_abonnement_kr": TSO_ABONNEMENT_KR,
+            "net_abo_kr": NET_ABO_KR,
         },
     }
 

@@ -236,8 +236,8 @@
 
       <div class="info-box">
         <strong>Prisberegning pr. kWh:</strong><br/>
-        (Spotpris + elafgift + nettarif + elselskabstillæg) × (1 + moms 25%)<br/>
-        <em>Tillæg hentes fra backend; de lokale værdier ovenfor er kun til reference.</em>
+        Spotpris × 1,25 (moms) + tariffer inkl. moms / 100<br/>
+        <em>Spot hentes fra markedet ekskl. moms. Tariffer (elafgift, nettarif, systemtarif, transmissionstarif) samt faste abonnementer (el abo, TSO abo, net abo) er indstillet på backend og er allerede inkl. moms.</em>
       </div>
     </section>
   </main>

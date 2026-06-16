@@ -585,12 +585,12 @@ function prisKlasse(value, alle) {
 function buildTooltip(t, afgifter) {
   const f = (v) => v.toLocaleString('da-DK', {minimumFractionDigits:1, maximumFractionDigits:1});
   const spotOre = t.spot_dkk_kwh * 100;
-  const momsOeOreSpot = spotOre * (afgifter.moms_pct / 100);
-  const spotInklMoms = spotOre + momsOeOreSpot;
+  const momsOreSpot = spotOre * (afgifter.moms_pct / 100);
+  const spotInklMoms = spotOre + momsOreSpot;
   const total = t.total_dkk_kwh * 100;
   const lines = [
     `Spotpris:              ${f(spotOre)} øre`,
-    `  + moms (${f(afgifter.moms_pct)}%):     ${f(momsOeOreSpot)} øre`,
+    `  + moms (${f(afgifter.moms_pct)}%):     ${f(momsOreSpot)} øre`,
     `  = spot inkl. moms:  ${f(spotInklMoms)} øre`,
     ``,
     `Elafgift:              ${f(afgifter.elafgift_ore)} øre`,
