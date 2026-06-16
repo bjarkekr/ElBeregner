@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 _token_cache: dict = {"token": None, "expires_at": None}
-_mp_cache: dict = {"mp_id": None}
+_mp_cache: dict = {"mp_ids": None}
 _db_pool: Optional[asyncpg.Pool] = None
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
@@ -164,14 +164,14 @@ async def get_access_token() -> str:
     return token
 
 
-async def get_metering_point_id(token: str) -> str:
-    if _mp_cache["mp_id"]:
-        return _mp_cache["mp_id"]
+async def get_metering_point_ids(token: str) -> list[str]:
+    if _mp_cache["mp_ids"]:
+        return _mp_cache["mp_ids"]
 
     async with httpx.AsyncClient(timeout=30) as client:
         for forsøg in range(3):
             resp = await client.get(
-                f"{ELOVERBLIK_BASE}/meteringpoints/meteringpoints?includeAll=false",
+                f"{ELOVERBLIK_BASE}/meteringpoints/meteringpoints?includeAll=true",
                 headers={"Authorization": f"Bearer {token}"},
             )
             if resp.status_code == 200:
@@ -185,8 +185,9 @@ async def get_metering_point_id(token: str) -> str:
     if not points:
         raise HTTPException(status_code=404, detail="Ingen målepunkter fundet på kontoen.")
 
-    _mp_cache["mp_id"] = points[0]["meteringPointId"]
-    return _mp_cache["mp_id"]
+    mp_ids = [p["meteringPointId"] for p in points]
+    _mp_cache["mp_ids"] = mp_ids
+    return mp_ids
 
 
 def parse_timeseries_split(result: list) -> tuple[dict[str, float], dict[str, float]]:
@@ -503,8 +504,8 @@ async def debug_forbrug(
     next_dato_str = next_dato.strftime("%Y-%m-%d")
 
     token = await get_access_token()
-    mp_id = await get_metering_point_id(token)
-    body = {"meteringPoints": {"meteringPoint": [mp_id]}}
+    mp_ids = await get_metering_point_ids(token)
+    body = {"meteringPoints": {"meteringPoint": mp_ids}}
 
     async with httpx.AsyncClient(timeout=60) as client:
         resp = await client.post(
@@ -600,8 +601,8 @@ async def _fetch_eloverblik_raw(fra: str, til: str) -> dict:
             return {"forbrug": cached_f, "produktion": cached_p, "fra_cache": True}
 
     token = await get_access_token()
-    mp_id = await get_metering_point_id(token)
-    body = {"meteringPoints": {"meteringPoint": [mp_id]}}
+    mp_ids = await get_metering_point_ids(token)
+    body = {"meteringPoints": {"meteringPoint": mp_ids}}
 
     fra_dt = datetime.strptime(fra, "%Y-%m-%d")
     forbrug: dict[str, float] = {}
