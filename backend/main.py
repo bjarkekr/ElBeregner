@@ -513,15 +513,26 @@ async def debug_forbrug(
             json=body,
         )
 
-    raw = resp.json()
+    try:
+        raw = resp.json()
+    except Exception as json_err:
+        return {
+            "kald": f"from={dato} to={next_dato_str}",
+            "http_status": resp.status_code,
+            "json_fejl": str(json_err),
+            "råt_svar": resp.text[:1000],
+        }
+
     forbrug_parsed, prod_parsed = parse_timeseries_split(raw.get("result", []))
 
     result_items = raw.get("result", [])
     struktur = []
+    alle_business_types: list[str] = []
     for item in result_items:
         doc = item.get("MyEnergyData_MarketDocument") or {}
         for ts in (doc.get("TimeSeries") or []):
             business_type = ts.get("businessType", "—")
+            alle_business_types.append(business_type)
             for period in (ts.get("Period") or []):
                 pts = period.get("Point") or []
                 struktur.append({
@@ -536,7 +547,7 @@ async def debug_forbrug(
     return {
         "kald": f"from={dato} to={next_dato_str}",
         "http_status": resp.status_code,
-        "result_items": len(result_items),
+        "distinct_business_types": list(dict.fromkeys(alle_business_types)),
         "forbrug_timer": len(forbrug_parsed),
         "forbrug_kwh_total": round(sum(forbrug_parsed.values()), 3),
         "produktion_timer": len(prod_parsed),

@@ -24,49 +24,74 @@
   </header>
 
   <nav class="tab-bar">
-    <button class="tab active" data-tab="maaned">Måned</button>
+    <button class="tab active" data-tab="forbrug">Forbrug</button>
+    <button class="tab" data-tab="produktion">Prod.</button>
     <button class="tab" data-tab="historik">Historik</button>
     <button class="tab" data-tab="priser">Priser</button>
     <button class="tab" data-tab="indstillinger">Indst.</button>
   </nav>
 
   <main>
-    <!-- MÅNED VIEW -->
-    <section id="tab-maaned" class="tab-content active">
-      <div class="month-picker">
-        <button id="prev-month" class="nav-btn" aria-label="Forrige måned">&#8249;</button>
-        <span id="month-label" class="month-label"></span>
-        <button id="next-month" class="nav-btn" aria-label="Næste måned">&#8250;</button>
-      </div>
+    <!-- Shared month picker — vist for Forbrug og Produktion tabs -->
+    <div id="shared-month-picker" class="month-picker">
+      <button id="prev-month" class="nav-btn" aria-label="Forrige måned">&#8249;</button>
+      <span id="month-label" class="month-label"></span>
+      <button id="next-month" class="nav-btn" aria-label="Næste måned">&#8250;</button>
+    </div>
 
-      <div id="maaned-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter data…</p></div>
-      <div id="maaned-error" class="error-box hidden"></div>
+    <!-- FORBRUG VIEW -->
+    <section id="tab-forbrug" class="tab-content active">
+      <div id="forbrug-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter forbrug…</p></div>
+      <div id="forbrug-error" class="error-box hidden"></div>
 
-      <div id="maaned-content" class="hidden">
+      <div id="forbrug-content" class="hidden">
         <div class="stats-grid">
           <div class="stat-card">
-            <div class="stat-value" id="stat-kwh">—</div>
+            <div class="stat-value" id="stat-forbrug-kwh">—</div>
             <div class="stat-label">Forbrug fra net</div>
           </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-prod">—</div>
-            <div class="stat-label">Produktion til net</div>
-          </div>
           <div class="stat-card highlight">
-            <div class="stat-value" id="stat-kr">—</div>
+            <div class="stat-value" id="stat-forbrug-kr">—</div>
             <div class="stat-label">kr. i alt</div>
           </div>
           <div class="stat-card">
-            <div class="stat-value" id="stat-spot">—</div>
+            <div class="stat-value" id="stat-forbrug-spot">—</div>
             <div class="stat-label">gns. spotpris</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-forbrug-timer">—</div>
+            <div class="stat-label">timer med data</div>
           </div>
         </div>
 
-        <div class="chart-wrap">
-          <canvas id="maaned-chart"></canvas>
+        <div class="chart-wrap" id="forbrug-chart-wrap">
+          <canvas id="forbrug-chart"></canvas>
         </div>
 
         <div id="manglende-advarsel" class="warning-box hidden"></div>
+      </div>
+    </section>
+
+    <!-- PRODUKTION VIEW -->
+    <section id="tab-produktion" class="tab-content hidden">
+      <div id="produktion-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter produktion…</p></div>
+      <div id="produktion-error" class="error-box hidden"></div>
+
+      <div id="produktion-content" class="hidden">
+        <div class="stats-grid">
+          <div class="stat-card highlight">
+            <div class="stat-value" id="stat-prod-kwh">—</div>
+            <div class="stat-label">Produktion til net</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-prod-timer">—</div>
+            <div class="stat-label">timer med sol</div>
+          </div>
+        </div>
+
+        <div class="chart-wrap" id="produktion-chart-wrap">
+          <canvas id="produktion-chart"></canvas>
+        </div>
       </div>
     </section>
 
@@ -186,7 +211,7 @@
         <label>
           Testdato
           <input type="date" id="debug-dato" />
-          <small>Tjekker hvad eloverblik returnerer for én dag</small>
+          <small>Tjekker hvad eloverblik returnerer for én dag (inkl. businessType per TimeSeries)</small>
         </label>
         <button type="button" id="debug-btn" class="btn-secondary">Kør test</button>
         <pre id="debug-output" class="debug-output hidden"></pre>

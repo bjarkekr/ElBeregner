@@ -43,18 +43,6 @@ function fmtOre(v) {
 
 function pad(n) { return String(n).padStart(2, '0'); }
 
-// Convert UTC ISO string to DK local hour label (CEST/CET)
-function utcToDkLabel(isoUtc) {
-  const d = new Date(isoUtc);
-  return d.toLocaleString('da-DK', {
-    timeZone: 'Europe/Copenhagen',
-    hour: '2-digit',
-    minute: '2-digit',
-    day: '2-digit',
-    month: '2-digit',
-  });
-}
-
 function utcToHourLabel(isoUtc) {
   const d = new Date(isoUtc);
   return d.toLocaleString('da-DK', {
@@ -79,7 +67,8 @@ async function apiFetch(path) {
 }
 
 // ─── Tab navigation ────────────────────────────────────────────────────────
-let currentTab = 'maaned';
+let currentTab = 'forbrug';
+const TABS_WITH_MONTH_PICKER = new Set(['forbrug', 'produktion']);
 
 function switchTab(tab) {
   currentTab = tab;
@@ -88,6 +77,14 @@ function switchTab(tab) {
     s.classList.toggle('active', s.id === `tab-${tab}`);
     s.classList.toggle('hidden', s.id !== `tab-${tab}`);
   });
+
+  // Show/hide shared month picker
+  document.getElementById('shared-month-picker').classList.toggle(
+    'hidden', !TABS_WITH_MONTH_PICKER.has(tab)
+  );
+
+  if (tab === 'forbrug') loadForbrug();
+  if (tab === 'produktion') loadProduktion();
   if (tab === 'historik' && !historikLoaded) loadHistorik();
   if (tab === 'priser') loadPriser();
 }
@@ -96,16 +93,14 @@ document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
-// ─── MÅNED VIEW ────────────────────────────────────────────────────────────
+// ─── Shared month state ────────────────────────────────────────────────────
 let currentYear = new Date().getFullYear();
-let currentMonth = new Date().getMonth() + 1; // 1-based
-let maanedChart = null;
+let currentMonth = new Date().getMonth() + 1;
 let maanedCache = {};
 
 function updateMonthLabel() {
   document.getElementById('month-label').textContent =
     `${MÅNEDER[currentMonth - 1]} ${currentYear}`;
-  // Disable next-month if it would be in the future
   const now = new Date();
   const isCurrentOrFuture = currentYear > now.getFullYear() ||
     (currentYear === now.getFullYear() && currentMonth >= now.getMonth() + 1);
@@ -116,51 +111,54 @@ document.getElementById('prev-month').addEventListener('click', () => {
   currentMonth--;
   if (currentMonth < 1) { currentMonth = 12; currentYear--; }
   updateMonthLabel();
-  loadMaaned();
+  if (currentTab === 'forbrug') loadForbrug();
+  else if (currentTab === 'produktion') loadProduktion();
 });
 
 document.getElementById('next-month').addEventListener('click', () => {
   currentMonth++;
   if (currentMonth > 12) { currentMonth = 1; currentYear++; }
   updateMonthLabel();
-  loadMaaned();
+  if (currentTab === 'forbrug') loadForbrug();
+  else if (currentTab === 'produktion') loadProduktion();
 });
 
-function showMaanedState(state, msg) {
-  const spinner = document.getElementById('maaned-spinner');
-  const error = document.getElementById('maaned-error');
-  const content = document.getElementById('maaned-content');
-  spinner.classList.toggle('hidden', state !== 'loading');
-  error.classList.toggle('hidden', state !== 'error');
-  content.classList.toggle('hidden', state !== 'data');
-  if (state === 'error') error.textContent = msg || 'Ukendt fejl';
+async function fetchMaanedData() {
+  const cacheKey = `${currentYear}-${pad(currentMonth)}`;
+  if (maanedCache[cacheKey]) return maanedCache[cacheKey];
+  const data = await apiFetch(`/api/maaned?aar=${currentYear}&maaned=${currentMonth}`);
+  maanedCache[cacheKey] = data;
+  return data;
 }
 
-async function loadMaaned() {
-  const cacheKey = `${currentYear}-${pad(currentMonth)}`;
-  showMaanedState('loading');
+// ─── FORBRUG VIEW ──────────────────────────────────────────────────────────
+let forbrugChart = null;
 
+function showForbrugState(state, msg) {
+  document.getElementById('forbrug-spinner').classList.toggle('hidden', state !== 'loading');
+  document.getElementById('forbrug-error').classList.toggle('hidden', state !== 'error');
+  document.getElementById('forbrug-content').classList.toggle('hidden', state !== 'data');
+  if (state === 'error') document.getElementById('forbrug-error').textContent = msg || 'Ukendt fejl';
+}
+
+async function loadForbrug() {
+  showForbrugState('loading');
   try {
-    let data = maanedCache[cacheKey];
-    if (!data) {
-      data = await apiFetch(`/api/maaned?aar=${currentYear}&maaned=${currentMonth}`);
-      maanedCache[cacheKey] = data;
-    }
-    renderMaaned(data);
+    const data = await fetchMaanedData();
+    renderForbrug(data);
   } catch (err) {
-    showMaanedState('error', err.message);
+    showForbrugState('error', err.message);
   }
 }
 
-function renderMaaned(data) {
-  showMaanedState('data');
+function renderForbrug(data) {
+  showForbrugState('data');
 
-  document.getElementById('stat-kwh').textContent = fmtKwh(data.forbrug_kwh ?? data.total_kwh);
-  document.getElementById('stat-prod').textContent = fmtKwh(data.produktion_kwh ?? 0);
-  document.getElementById('stat-kr').textContent = fmtKr(data.total_kr);
-  document.getElementById('stat-spot').textContent = fmtOre(data.gns_spotpris_kwh);
+  document.getElementById('stat-forbrug-kwh').textContent = fmtKwh(data.forbrug_kwh ?? data.total_kwh);
+  document.getElementById('stat-forbrug-kr').textContent = fmtKr(data.total_kr);
+  document.getElementById('stat-forbrug-spot').textContent = fmtOre(data.gns_spotpris_kwh);
+  document.getElementById('stat-forbrug-timer').textContent = data.timer.length;
 
-  // Manglende timer advarsel
   const advarsel = document.getElementById('manglende-advarsel');
   if (data.manglende_timer_antal > 0) {
     advarsel.textContent = `Bemærk: ${data.manglende_timer_antal} timer mangler data og er ikke medregnet.`;
@@ -169,61 +167,46 @@ function renderMaaned(data) {
     advarsel.classList.add('hidden');
   }
 
-  renderMaanedChart(data.timer);
+  renderForbrugChart(data.timer);
 }
 
-function renderMaanedChart(timer) {
+function renderForbrugChart(timer) {
   const labels = timer.map(t => utcToHourLabel(t.time));
   const kwh = timer.map(t => t.kwh);
-  const prod = timer.map(t => t.produktion_kwh ?? 0);
   const spot = timer.map(t => parseFloat((t.spotpris_kwh * 100).toFixed(2)));
-  const harProduktion = prod.some(v => v > 0);
 
-  if (maanedChart) { maanedChart.destroy(); maanedChart = null; }
+  if (forbrugChart) { forbrugChart.destroy(); forbrugChart = null; }
 
-  const datasets = [
-    {
-      type: 'bar',
-      label: 'Forbrug fra net (kWh)',
-      data: kwh,
-      backgroundColor: 'rgba(76, 175, 80, 0.6)',
-      borderColor: '#2e7d32',
-      borderWidth: 0,
-      yAxisID: 'yKwh',
-      order: 2,
+  const ctx = document.getElementById('forbrug-chart').getContext('2d');
+  forbrugChart = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Forbrug fra net (kWh)',
+          data: kwh,
+          backgroundColor: 'rgba(76, 175, 80, 0.6)',
+          borderColor: '#2e7d32',
+          borderWidth: 0,
+          yAxisID: 'yKwh',
+          order: 2,
+        },
+        {
+          type: 'line',
+          label: 'Spotpris (øre/kWh)',
+          data: spot,
+          borderColor: '#1565c0',
+          backgroundColor: 'rgba(21, 101, 192, 0.06)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          yAxisID: 'ySpot',
+          order: 1,
+          fill: true,
+        },
+      ],
     },
-  ];
-
-  if (harProduktion) {
-    datasets.push({
-      type: 'bar',
-      label: 'Produktion til net (kWh)',
-      data: prod,
-      backgroundColor: 'rgba(255, 167, 38, 0.65)',
-      borderColor: '#e65100',
-      borderWidth: 0,
-      yAxisID: 'yKwh',
-      order: 3,
-    });
-  }
-
-  datasets.push({
-    type: 'line',
-    label: 'Spotpris (øre/kWh)',
-    data: spot,
-    borderColor: '#1565c0',
-    backgroundColor: 'rgba(21, 101, 192, 0.06)',
-    borderWidth: 2,
-    pointRadius: 0,
-    tension: 0.3,
-    yAxisID: 'ySpot',
-    order: 1,
-    fill: true,
-  });
-
-  const ctx = document.getElementById('maaned-chart').getContext('2d');
-  maanedChart = new Chart(ctx, {
-    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -242,14 +225,12 @@ function renderMaanedChart(timer) {
       scales: {
         x: { ticks: { maxTicksLimit: 24, font: { size: 10 } } },
         yKwh: {
-          type: 'linear',
-          position: 'left',
+          type: 'linear', position: 'left',
           title: { display: true, text: 'kWh', font: { size: 11 } },
           grid: { color: 'rgba(0,0,0,0.05)' },
         },
         ySpot: {
-          type: 'linear',
-          position: 'right',
+          type: 'linear', position: 'right',
           title: { display: true, text: 'Øre/kWh', font: { size: 11 } },
           grid: { display: false },
         },
@@ -257,7 +238,110 @@ function renderMaanedChart(timer) {
     },
   });
 
-  document.querySelector('.chart-wrap').style.height = '300px';
+  document.getElementById('forbrug-chart-wrap').style.height = '300px';
+}
+
+// ─── PRODUKTION VIEW ───────────────────────────────────────────────────────
+let produktionChart = null;
+
+function showProduktionState(state, msg) {
+  document.getElementById('produktion-spinner').classList.toggle('hidden', state !== 'loading');
+  document.getElementById('produktion-error').classList.toggle('hidden', state !== 'error');
+  document.getElementById('produktion-content').classList.toggle('hidden', state !== 'data');
+  if (state === 'error') document.getElementById('produktion-error').textContent = msg || 'Ukendt fejl';
+}
+
+async function loadProduktion() {
+  showProduktionState('loading');
+  try {
+    const data = await fetchMaanedData();
+    renderProduktion(data);
+  } catch (err) {
+    showProduktionState('error', err.message);
+  }
+}
+
+function renderProduktion(data) {
+  showProduktionState('data');
+
+  const prodKwh = data.produktion_kwh ?? 0;
+  const timerMedSol = (data.timer || []).filter(t => (t.produktion_kwh ?? 0) > 0).length;
+
+  document.getElementById('stat-prod-kwh').textContent = fmtKwh(prodKwh);
+  document.getElementById('stat-prod-timer').textContent = timerMedSol;
+
+  renderProduktionChart(data.timer || []);
+}
+
+function renderProduktionChart(timer) {
+  const labels = timer.map(t => utcToHourLabel(t.time));
+  const prod = timer.map(t => t.produktion_kwh ?? 0);
+  const spot = timer.map(t => parseFloat((t.spotpris_kwh * 100).toFixed(2)));
+
+  if (produktionChart) { produktionChart.destroy(); produktionChart = null; }
+
+  const ctx = document.getElementById('produktion-chart').getContext('2d');
+  produktionChart = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Produktion til net (kWh)',
+          data: prod,
+          backgroundColor: 'rgba(255, 167, 38, 0.7)',
+          borderColor: '#e65100',
+          borderWidth: 0,
+          yAxisID: 'yKwh',
+          order: 2,
+        },
+        {
+          type: 'line',
+          label: 'Spotpris (øre/kWh)',
+          data: spot,
+          borderColor: '#1565c0',
+          backgroundColor: 'rgba(21, 101, 192, 0.06)',
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          yAxisID: 'ySpot',
+          order: 1,
+          fill: true,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { position: 'top' },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              if (ctx.dataset.yAxisID === 'ySpot') return ` ${ctx.parsed.y.toFixed(1)} øre/kWh`;
+              return ` ${ctx.parsed.y.toFixed(3)} kWh`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { ticks: { maxTicksLimit: 24, font: { size: 10 } } },
+        yKwh: {
+          type: 'linear', position: 'left',
+          title: { display: true, text: 'kWh', font: { size: 11 } },
+          grid: { color: 'rgba(0,0,0,0.05)' },
+        },
+        ySpot: {
+          type: 'linear', position: 'right',
+          title: { display: true, text: 'Øre/kWh', font: { size: 11 } },
+          grid: { display: false },
+        },
+      },
+    },
+  });
+
+  document.getElementById('produktion-chart-wrap').style.height = '300px';
 }
 
 // ─── HISTORIK VIEW ─────────────────────────────────────────────────────────
@@ -355,13 +439,11 @@ function renderHistorik(rows) {
       plugins: { legend: { position: 'top' } },
       scales: {
         yKr: {
-          type: 'linear',
-          position: 'left',
+          type: 'linear', position: 'left',
           title: { display: true, text: 'kr.' },
         },
         yKwh: {
-          type: 'linear',
-          position: 'right',
+          type: 'linear', position: 'right',
           title: { display: true, text: 'kWh' },
           grid: { display: false },
         },
@@ -369,7 +451,6 @@ function renderHistorik(rows) {
     },
   });
 
-  // Table
   const tbody = document.getElementById('historik-tbody');
   tbody.innerHTML = '';
   [...rows].reverse().forEach(r => {
@@ -502,11 +583,9 @@ document.getElementById('settings-form').addEventListener('submit', (e) => {
   settings.zone = document.getElementById('priszone-select').value;
   saveSettings(settings);
 
-  // Clear caches so next load uses new settings
   maanedCache = {};
   historikLoaded = false;
 
-  // Update zone badge
   document.getElementById('zone-badge').textContent = settings.zone || 'DK1';
 
   const fb = document.getElementById('settings-feedback');
@@ -515,8 +594,8 @@ document.getElementById('settings-form').addEventListener('submit', (e) => {
   fb.classList.remove('hidden');
   setTimeout(() => fb.classList.add('hidden'), 3000);
 
-  switchTab('maaned');
-  loadMaaned();
+  switchTab('forbrug');
+  loadForbrug();
 });
 
 // ─── DEBUG ─────────────────────────────────────────────────────────────────
@@ -545,18 +624,16 @@ function init() {
   loadSettingsForm();
   document.getElementById('zone-badge').textContent = settings.zone || 'DK1';
 
-  // PWA service worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(err => {
       console.warn('Service worker registrering fejlede:', err);
     });
   }
 
-  // Load first tab
   if (backendUrl()) {
-    loadMaaned();
+    loadForbrug();
   } else {
-    showMaanedState('error',
+    showForbrugState('error',
       'Velkommen! Gå til Indstillinger og angiv din backend URL for at komme i gang.');
   }
 }
