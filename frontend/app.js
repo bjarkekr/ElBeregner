@@ -247,7 +247,9 @@ function renderForbrug(data) {
   forbrugDrillDate = null;
 
   document.getElementById('stat-forbrug-kwh').textContent = fmtKwh(data.forbrug_kwh ?? data.total_kwh);
+  document.getElementById('stat-netto-kr').textContent = fmtKr(data.netto_kr ?? data.total_kr);
   document.getElementById('stat-forbrug-kr').textContent = fmtKr(data.total_kr);
+  document.getElementById('stat-prod-kr').textContent = data.produktion_kr != null ? fmtKr(data.produktion_kr) : '—';
   document.getElementById('stat-forbrug-spot').textContent = fmtOre(data.gns_spotpris_kwh);
   document.getElementById('stat-forbrug-timer').textContent = data.timer.length;
 
@@ -522,7 +524,7 @@ async function loadHistorik() {
 
 function renderHistorik(rows) {
   const labels = rows.map(r => `${MÅNEDER[r.maaned - 1].slice(0,3)} ${r.aar}`);
-  const krData = rows.map(r => r.total_kr);
+  const nettoData = rows.map(r => r.netto_kr ?? r.total_kr);
   const kwhData = rows.map(r => r.forbrug_kwh ?? r.total_kwh);
   const prodData = rows.map(r => r.produktion_kwh ?? 0);
 
@@ -535,8 +537,8 @@ function renderHistorik(rows) {
       labels,
       datasets: [
         {
-          label: 'Total (kr.)',
-          data: krData,
+          label: 'Netto (kr.)',
+          data: nettoData,
           backgroundColor: 'rgba(46, 125, 50, 0.75)',
           borderColor: '#1b5e20', borderWidth: 1,
           yAxisID: 'yKr',
@@ -568,13 +570,16 @@ function renderHistorik(rows) {
   [...rows].reverse().forEach(r => {
     const forbrug = r.forbrug_kwh ?? r.total_kwh;
     const prod = r.produktion_kwh ?? 0;
+    const solKr = r.produktion_kr ?? 0;
+    const nettoKr = r.netto_kr ?? r.total_kr;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${MÅNEDER[r.maaned - 1]} ${r.aar}</td>
-      <td>${forbrug != null ? forbrug.toLocaleString('da-DK', {maximumFractionDigits:1}) : '—'}</td>
-      <td>${prod > 0 ? prod.toLocaleString('da-DK', {maximumFractionDigits:1}) : '—'}</td>
+      <td>${forbrug != null ? forbrug.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
+      <td>${prod > 0 ? prod.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
       <td>${r.gns_spotpris_kwh != null ? (r.gns_spotpris_kwh * 100).toLocaleString('da-DK', {maximumFractionDigits:1}) + ' øre' : '—'}</td>
-      <td><strong>${r.total_kr != null ? r.total_kr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</strong></td>
+      <td>${solKr > 0 ? solKr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</td>
+      <td><strong>${nettoKr != null ? nettoKr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</strong></td>
     `;
     tbody.appendChild(tr);
   });
@@ -719,6 +724,7 @@ function populateAfgifterForm(a) {
   document.getElementById('cfg-abonnement').value = a.abonnement_kr ?? '';
   document.getElementById('cfg-tso').value = a.tso_abonnement_kr ?? '';
   document.getElementById('cfg-net-abo').value = a.net_abo_kr ?? '';
+  document.getElementById('cfg-salgs-fradrag').value = a.salgs_fradrag_ore ?? '';
 }
 
 async function loadAfgifter() {
@@ -753,6 +759,7 @@ document.getElementById('afgifter-gem').addEventListener('click', async () => {
     abonnement_kr: parseFloat(document.getElementById('cfg-abonnement').value),
     tso_abonnement_kr: parseFloat(document.getElementById('cfg-tso').value),
     net_abo_kr: parseFloat(document.getElementById('cfg-net-abo').value),
+    salgs_fradrag_ore: parseFloat(document.getElementById('cfg-salgs-fradrag').value),
   };
   // Fjern felter med ugyldige værdier
   for (const k of Object.keys(payload)) {

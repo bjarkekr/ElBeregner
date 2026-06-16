@@ -52,8 +52,16 @@
             <div class="stat-label">Forbrug fra net</div>
           </div>
           <div class="stat-card highlight">
+            <div class="stat-value" id="stat-netto-kr">—</div>
+            <div class="stat-label">Nettoomkostning</div>
+          </div>
+          <div class="stat-card">
             <div class="stat-value" id="stat-forbrug-kr">—</div>
-            <div class="stat-label">kr. i alt</div>
+            <div class="stat-label">Forbrug kr.</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-prod-kr">—</div>
+            <div class="stat-label">Produktion kr. (sol)</div>
           </div>
           <div class="stat-card">
             <div class="stat-value" id="stat-forbrug-spot">—</div>
@@ -129,9 +137,10 @@
               <tr>
                 <th>Måned</th>
                 <th>Forbrug</th>
-                <th>Produktion</th>
+                <th>Sol kWh</th>
                 <th>Gns. spot</th>
-                <th>Total kr.</th>
+                <th>Sol kr.</th>
+                <th>Netto kr.</th>
               </tr>
             </thead>
             <tbody id="historik-tbody"></tbody>
@@ -231,6 +240,11 @@
           <label>El abonnement<input type="number" id="cfg-abonnement" step="0.01" /></label>
           <label>TSO System Abonnement<input type="number" id="cfg-tso" step="0.01" /></label>
           <label>Net abo C egenproducent<input type="number" id="cfg-net-abo" step="0.01" /></label>
+        </div>
+
+        <div class="settings-section-title" style="margin-top:4px">Solceller</div>
+        <div class="cfg-grid">
+          <label>Salgsfradrag (øre/kWh)<input type="number" id="cfg-salgs-fradrag" step="0.01" /><small>Fradrag fra spotpris ved salg til net. 0 = ingen fradrag.</small></label>
         </div>
 
         <div style="display:flex; gap:8px; margin-top:4px">

@@ -28,6 +28,7 @@ ELSELSKAB_TILLÆG_ORE = float(os.getenv("ELSELSKAB_TILLÆG_ORE", "0.0"))
 ABONNEMENT_KR = float(os.getenv("ABONNEMENT_KR", "38.0"))
 TSO_ABONNEMENT_KR = float(os.getenv("TSO_ABONNEMENT_KR", "19.0"))  # TSO System Abonnement
 NET_ABO_KR = float(os.getenv("NET_ABO_KR", "63.0"))                # Net abo C egenproducent
+SALGS_FRADRAG_ORE = float(os.getenv("SALGS_FRADRAG_ORE", "0.0"))  # Fradrag fra spot ved salg af solel
 MOMS = float(os.getenv("MOMS", "0.25"))
 PRISZONE = os.getenv("PRISZONE", "DK1")
 API_KEY = os.getenv("API_KEY", "")
@@ -64,6 +65,7 @@ def _current_afgifter() -> dict:
         "abonnement_kr": ABONNEMENT_KR,
         "tso_abonnement_kr": TSO_ABONNEMENT_KR,
         "net_abo_kr": NET_ABO_KR,
+        "salgs_fradrag_ore": SALGS_FRADRAG_ORE,
         "moms_pct": MOMS * 100,
     }
 
@@ -71,7 +73,7 @@ def _current_afgifter() -> dict:
 async def _load_config_from_db(conn) -> None:
     global ELAFGIFT_ORE, NETTARIF_T1_ORE, NETTARIF_T2_ORE, NETTARIF_T3_ORE, NETTARIF_T4_ORE
     global SYSTEMTARIF_ORE, TRANSMISSIONSTARIF_ORE, ELSELSKAB_TILLÆG_ORE
-    global ABONNEMENT_KR, TSO_ABONNEMENT_KR, NET_ABO_KR
+    global ABONNEMENT_KR, TSO_ABONNEMENT_KR, NET_ABO_KR, SALGS_FRADRAG_ORE
     rows = await conn.fetch("SELECT key, value FROM config")
     cfg = {r["key"]: float(r["value"]) for r in rows}
     if "elafgift_ore" in cfg: ELAFGIFT_ORE = cfg["elafgift_ore"]
@@ -85,6 +87,7 @@ async def _load_config_from_db(conn) -> None:
     if "abonnement_kr" in cfg: ABONNEMENT_KR = cfg["abonnement_kr"]
     if "tso_abonnement_kr" in cfg: TSO_ABONNEMENT_KR = cfg["tso_abonnement_kr"]
     if "net_abo_kr" in cfg: NET_ABO_KR = cfg["net_abo_kr"]
+    if "salgs_fradrag_ore" in cfg: SALGS_FRADRAG_ORE = cfg["salgs_fradrag_ore"]
 
 
 @app.on_event("startup")
@@ -388,6 +391,7 @@ async def get_maaned(
 
     timer = []
     total_kr_forbrug = 0.0
+    total_prod_kr = 0.0
     total_forbrug_kwh = 0.0
     manglende_timer = []
     spotpris_sum = 0.0
@@ -404,7 +408,10 @@ async def get_maaned(
         # spot er fra markedet ekskl. moms; øvrige tariffer er inkl. moms (forbrugerpris)
         pris_per_kwh = spot * (1 + MOMS) + (fast_ore + nettarif) / 100.0
         kr = round(kwh * pris_per_kwh, 4)
+        salgs_pris = max(0.0, spot - SALGS_FRADRAG_ORE / 100.0)
+        prod_kr = round(prod_kwh * salgs_pris, 4)
         total_kr_forbrug += kr
+        total_prod_kr += prod_kr
         total_forbrug_kwh += kwh
         spotpris_sum += spot
         spotpris_count += 1
@@ -416,6 +423,7 @@ async def get_maaned(
             "nettarif_ore": nettarif,
             "pris_per_kwh": round(pris_per_kwh, 4),
             "kr": kr,
+            "produktion_kr": prod_kr,
         })
 
     total_prod_kwh = round(sum(timeprod.values()), 3)
@@ -423,6 +431,7 @@ async def get_maaned(
     gns_spotpris = (spotpris_sum / spotpris_count) if spotpris_count else 0.0
     total_fast_kr = ABONNEMENT_KR + TSO_ABONNEMENT_KR + NET_ABO_KR
     total_kr = round(total_kr_forbrug + total_fast_kr, 2)
+    netto_kr = round(total_kr - total_prod_kr, 2)
 
     return {
         "aar": aar, "maaned": maaned, "fra": fra, "til": til, "zone": PRISZONE,
@@ -436,6 +445,8 @@ async def get_maaned(
         "net_abo_kr": NET_ABO_KR,
         "total_fast_kr": round(total_fast_kr, 2),
         "total_kr": total_kr,
+        "produktion_kr": round(total_prod_kr, 2),
+        "netto_kr": netto_kr,
         "gns_spotpris_kwh": round(gns_spotpris, 6),
         "afgifter": {
             "elafgift_ore": ELAFGIFT_ORE,
@@ -654,12 +665,12 @@ async def save_afgifter(request: Request, x_api_key: Optional[str] = Header(defa
     check_api_key(x_api_key)
     global ELAFGIFT_ORE, NETTARIF_T1_ORE, NETTARIF_T2_ORE, NETTARIF_T3_ORE, NETTARIF_T4_ORE
     global SYSTEMTARIF_ORE, TRANSMISSIONSTARIF_ORE, ELSELSKAB_TILLÆG_ORE
-    global ABONNEMENT_KR, TSO_ABONNEMENT_KR, NET_ABO_KR
+    global ABONNEMENT_KR, TSO_ABONNEMENT_KR, NET_ABO_KR, SALGS_FRADRAG_ORE
 
     allowed = {
         "elafgift_ore", "nettarif_t1_ore", "nettarif_t2_ore", "nettarif_t3_ore", "nettarif_t4_ore",
         "systemtarif_ore", "transmissionstarif_ore", "elselskab_tillæg_ore",
-        "abonnement_kr", "tso_abonnement_kr", "net_abo_kr",
+        "abonnement_kr", "tso_abonnement_kr", "net_abo_kr", "salgs_fradrag_ore",
     }
     body = await request.json()
     updates: dict[str, float] = {}
@@ -692,6 +703,7 @@ async def save_afgifter(request: Request, x_api_key: Optional[str] = Header(defa
     if "abonnement_kr" in updates: ABONNEMENT_KR = updates["abonnement_kr"]
     if "tso_abonnement_kr" in updates: TSO_ABONNEMENT_KR = updates["tso_abonnement_kr"]
     if "net_abo_kr" in updates: NET_ABO_KR = updates["net_abo_kr"]
+    if "salgs_fradrag_ore" in updates: SALGS_FRADRAG_ORE = updates["salgs_fradrag_ore"]
 
     return _current_afgifter()
 
