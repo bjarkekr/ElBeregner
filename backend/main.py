@@ -588,55 +588,90 @@ async def status():
 
 # ─── Internal fetch helpers ──────────────────────────────────────────────────
 
+def _missing_day_ranges(
+    fra_dt: datetime, til_dt: datetime, hours_per_utc_day: dict[str, int]
+) -> list[tuple[datetime, datetime]]:
+    """Returnerer liste af (start, slut) datopar for UTC-dage med < 20 timers data."""
+    ranges = []
+    run_start = None
+    current = fra_dt
+    while current <= til_dt:
+        mangler = hours_per_utc_day.get(current.strftime("%Y-%m-%d"), 0) < 20
+        if mangler and run_start is None:
+            run_start = current
+        elif not mangler and run_start is not None:
+            ranges.append((run_start, current - timedelta(days=1)))
+            run_start = None
+        current += timedelta(days=1)
+    if run_start is not None:
+        ranges.append((run_start, til_dt))
+    return ranges
+
+
 async def _fetch_eloverblik_raw(fra: str, til: str) -> dict:
-    """Henter forbrug + produktion fra eloverblik. Cacher afsluttede måneder."""
+    """Henter forbrug + produktion fra eloverblik.
+    Springer dage over der allerede har data i DB (>= 20 timer pr. UTC-dag).
+    """
     til_dt = datetime.strptime(til, "%Y-%m-%d")
     til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Brug cache til afsluttede måneder — kræv mindst 24 timer for at undgå partial-cache
-    if not is_current_month(fra):
-        cached_f = await db_get_forbrug(fra, til_excl)
-        if cached_f and len(cached_f) >= 24:
-            cached_p = await db_get_produktion(fra, til_excl) or {}
-            return {"forbrug": cached_f, "produktion": cached_p, "fra_cache": True}
+    # Hent hvad vi allerede har i DB
+    cached_f = await db_get_forbrug(fra, til_excl) or {}
+    cached_p = await db_get_produktion(fra, til_excl) or {}
+
+    # Afsluttede måneder med tilstrækkeligt data: brug cache direkte
+    if not is_current_month(fra) and len(cached_f) >= 24:
+        return {"forbrug": cached_f, "produktion": cached_p, "fra_cache": True}
+
+    # Find dage der mangler data
+    fra_dt = datetime.strptime(fra, "%Y-%m-%d")
+    hours_per_utc_day: dict[str, int] = {}
+    for hour_key in cached_f:
+        day = hour_key[:10]
+        hours_per_utc_day[day] = hours_per_utc_day.get(day, 0) + 1
+
+    missing = _missing_day_ranges(fra_dt, til_dt, hours_per_utc_day)
+
+    if not missing:
+        return {"forbrug": cached_f, "produktion": cached_p, "fra_cache": True}
 
     token = await get_access_token()
     mp_ids = await get_metering_point_ids(token)
     body = {"meteringPoints": {"meteringPoint": mp_ids}}
 
-    fra_dt = datetime.strptime(fra, "%Y-%m-%d")
-    forbrug: dict[str, float] = {}
-    produktion: dict[str, float] = {}
-    chunk_start = fra_dt
+    forbrug = dict(cached_f)
+    produktion = dict(cached_p)
 
     async with httpx.AsyncClient(timeout=60) as client:
-        while chunk_start <= til_dt:
-            chunk_end = min(chunk_start + timedelta(days=14), til_dt + timedelta(days=1))
-            fra_s = chunk_start.strftime("%Y-%m-%d")
-            til_s = chunk_end.strftime("%Y-%m-%d")
-            for forsøg in range(4):
-                resp = await client.post(
-                    f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra_s}/{til_s}/Hour",
-                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                    json=body,
-                )
-                if resp.status_code != 503:
-                    break
-                if forsøg < 3:
-                    await asyncio.sleep(5 * (forsøg + 1))  # 5s, 10s, 15s
-            if resp.status_code != 200:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({fra_s}–{til_s}): {resp.text[:300]}"
-                )
-            f_chunk, p_chunk = parse_timeseries_split(resp.json().get("result", []))
-            for hour_key, kwh in f_chunk.items():
-                if fra <= hour_key[:10] < til_excl:
-                    forbrug[hour_key] = forbrug.get(hour_key, 0.0) + kwh
-            for hour_key, kwh in p_chunk.items():
-                if fra <= hour_key[:10] < til_excl:
-                    produktion[hour_key] = produktion.get(hour_key, 0.0) + kwh
-            chunk_start = chunk_end
+        for range_start, range_end in missing:
+            chunk_start = range_start
+            while chunk_start <= range_end:
+                chunk_end = min(chunk_start + timedelta(days=14), range_end + timedelta(days=1))
+                fra_s = chunk_start.strftime("%Y-%m-%d")
+                til_s = chunk_end.strftime("%Y-%m-%d")
+                for forsøg in range(4):
+                    resp = await client.post(
+                        f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra_s}/{til_s}/Hour",
+                        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                        json=body,
+                    )
+                    if resp.status_code != 503:
+                        break
+                    if forsøg < 3:
+                        await asyncio.sleep(5 * (forsøg + 1))  # 5s, 10s, 15s
+                if resp.status_code != 200:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({fra_s}–{til_s}): {resp.text[:300]}"
+                    )
+                f_chunk, p_chunk = parse_timeseries_split(resp.json().get("result", []))
+                for hour_key, kwh in f_chunk.items():
+                    if fra <= hour_key[:10] < til_excl:
+                        forbrug[hour_key] = forbrug.get(hour_key, 0.0) + kwh
+                for hour_key, kwh in p_chunk.items():
+                    if fra <= hour_key[:10] < til_excl:
+                        produktion[hour_key] = produktion.get(hour_key, 0.0) + kwh
+                chunk_start = chunk_end
 
     await asyncio.gather(
         db_save_forbrug(forbrug),
