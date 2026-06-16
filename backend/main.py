@@ -39,7 +39,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -49,6 +49,42 @@ _db_pool: Optional[asyncpg.Pool] = None
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
 ENERGIDATA_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
+
+
+def _current_afgifter() -> dict:
+    return {
+        "elafgift_ore": ELAFGIFT_ORE,
+        "nettarif_t1_ore": NETTARIF_T1_ORE,
+        "nettarif_t2_ore": NETTARIF_T2_ORE,
+        "nettarif_t3_ore": NETTARIF_T3_ORE,
+        "nettarif_t4_ore": NETTARIF_T4_ORE,
+        "systemtarif_ore": SYSTEMTARIF_ORE,
+        "transmissionstarif_ore": TRANSMISSIONSTARIF_ORE,
+        "elselskab_tillæg_ore": ELSELSKAB_TILLÆG_ORE,
+        "abonnement_kr": ABONNEMENT_KR,
+        "tso_abonnement_kr": TSO_ABONNEMENT_KR,
+        "net_abo_kr": NET_ABO_KR,
+        "moms_pct": MOMS * 100,
+    }
+
+
+async def _load_config_from_db(conn) -> None:
+    global ELAFGIFT_ORE, NETTARIF_T1_ORE, NETTARIF_T2_ORE, NETTARIF_T3_ORE, NETTARIF_T4_ORE
+    global SYSTEMTARIF_ORE, TRANSMISSIONSTARIF_ORE, ELSELSKAB_TILLÆG_ORE
+    global ABONNEMENT_KR, TSO_ABONNEMENT_KR, NET_ABO_KR
+    rows = await conn.fetch("SELECT key, value FROM config")
+    cfg = {r["key"]: float(r["value"]) for r in rows}
+    if "elafgift_ore" in cfg: ELAFGIFT_ORE = cfg["elafgift_ore"]
+    if "nettarif_t1_ore" in cfg: NETTARIF_T1_ORE = cfg["nettarif_t1_ore"]
+    if "nettarif_t2_ore" in cfg: NETTARIF_T2_ORE = cfg["nettarif_t2_ore"]
+    if "nettarif_t3_ore" in cfg: NETTARIF_T3_ORE = cfg["nettarif_t3_ore"]
+    if "nettarif_t4_ore" in cfg: NETTARIF_T4_ORE = cfg["nettarif_t4_ore"]
+    if "systemtarif_ore" in cfg: SYSTEMTARIF_ORE = cfg["systemtarif_ore"]
+    if "transmissionstarif_ore" in cfg: TRANSMISSIONSTARIF_ORE = cfg["transmissionstarif_ore"]
+    if "elselskab_tillæg_ore" in cfg: ELSELSKAB_TILLÆG_ORE = cfg["elselskab_tillæg_ore"]
+    if "abonnement_kr" in cfg: ABONNEMENT_KR = cfg["abonnement_kr"]
+    if "tso_abonnement_kr" in cfg: TSO_ABONNEMENT_KR = cfg["tso_abonnement_kr"]
+    if "net_abo_kr" in cfg: NET_ABO_KR = cfg["net_abo_kr"]
 
 
 @app.on_event("startup")
@@ -81,6 +117,12 @@ async def startup():
                     PRIMARY KEY (hour_utc, zone)
                 )
             """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
             # One-time migration: clear forbrug table that contained production data
             already = await conn.fetchval(
                 "SELECT 1 FROM migrations WHERE name = 'v2_split_forbrug_produktion'"
@@ -90,6 +132,7 @@ async def startup():
                 await conn.execute(
                     "INSERT INTO migrations (name) VALUES ('v2_split_forbrug_produktion')"
                 )
+            await _load_config_from_db(conn)
 
 
 @app.on_event("shutdown")
@@ -598,6 +641,59 @@ async def status():
             "net_abo_kr": NET_ABO_KR,
         },
     }
+
+
+@app.get("/api/afgifter")
+async def get_afgifter(x_api_key: Optional[str] = Header(default=None)):
+    check_api_key(x_api_key)
+    return _current_afgifter()
+
+
+@app.post("/api/afgifter")
+async def save_afgifter(request: Request, x_api_key: Optional[str] = Header(default=None)):
+    check_api_key(x_api_key)
+    global ELAFGIFT_ORE, NETTARIF_T1_ORE, NETTARIF_T2_ORE, NETTARIF_T3_ORE, NETTARIF_T4_ORE
+    global SYSTEMTARIF_ORE, TRANSMISSIONSTARIF_ORE, ELSELSKAB_TILLÆG_ORE
+    global ABONNEMENT_KR, TSO_ABONNEMENT_KR, NET_ABO_KR
+
+    allowed = {
+        "elafgift_ore", "nettarif_t1_ore", "nettarif_t2_ore", "nettarif_t3_ore", "nettarif_t4_ore",
+        "systemtarif_ore", "transmissionstarif_ore", "elselskab_tillæg_ore",
+        "abonnement_kr", "tso_abonnement_kr", "net_abo_kr",
+    }
+    body = await request.json()
+    updates: dict[str, float] = {}
+    for key, val in body.items():
+        if key not in allowed:
+            continue
+        try:
+            updates[key] = float(val)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail=f"Ugyldig værdi for {key}: {val}")
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="Ingen gyldige felter sendt.")
+
+    if _db_pool:
+        async with _db_pool.acquire() as conn:
+            await conn.executemany(
+                "INSERT INTO config (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = $2",
+                [(k, str(v)) for k, v in updates.items()],
+            )
+
+    if "elafgift_ore" in updates: ELAFGIFT_ORE = updates["elafgift_ore"]
+    if "nettarif_t1_ore" in updates: NETTARIF_T1_ORE = updates["nettarif_t1_ore"]
+    if "nettarif_t2_ore" in updates: NETTARIF_T2_ORE = updates["nettarif_t2_ore"]
+    if "nettarif_t3_ore" in updates: NETTARIF_T3_ORE = updates["nettarif_t3_ore"]
+    if "nettarif_t4_ore" in updates: NETTARIF_T4_ORE = updates["nettarif_t4_ore"]
+    if "systemtarif_ore" in updates: SYSTEMTARIF_ORE = updates["systemtarif_ore"]
+    if "transmissionstarif_ore" in updates: TRANSMISSIONSTARIF_ORE = updates["transmissionstarif_ore"]
+    if "elselskab_tillæg_ore" in updates: ELSELSKAB_TILLÆG_ORE = updates["elselskab_tillæg_ore"]
+    if "abonnement_kr" in updates: ABONNEMENT_KR = updates["abonnement_kr"]
+    if "tso_abonnement_kr" in updates: TSO_ABONNEMENT_KR = updates["tso_abonnement_kr"]
+    if "net_abo_kr" in updates: NET_ABO_KR = updates["net_abo_kr"]
+
+    return _current_afgifter()
 
 
 # ─── Internal fetch helpers ──────────────────────────────────────────────────

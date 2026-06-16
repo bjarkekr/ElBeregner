@@ -183,19 +183,19 @@
     <!-- INDSTILLINGER VIEW -->
     <section id="tab-indstillinger" class="tab-content hidden">
       <h2 class="section-title">Indstillinger</h2>
+
+      <!-- Forbindelsesindstillinger (gemmes lokalt) -->
       <form id="settings-form" class="settings-form">
         <label>
           Backend URL
           <input type="url" id="backend-url" placeholder="https://din-api.railway.app" />
           <small>URL til din Railway backend (uden trailing slash)</small>
         </label>
-
         <label>
           API-nøgle
           <input type="password" id="api-key" placeholder="Din hemmelige nøgle" />
           <small>Skal matche API_KEY i Railway Variables</small>
         </label>
-
         <label>
           Priszone
           <select id="priszone-select">
@@ -203,26 +203,44 @@
             <option value="DK2">DK2 – Sjælland</option>
           </select>
         </label>
-
-        <div class="settings-section-title">Afgifter (øre/kWh)</div>
-
-        <label>
-          Elafgift
-          <input type="number" id="elafgift" step="0.1" />
-        </label>
-        <label>
-          Nettarif
-          <input type="number" id="nettarif" step="0.1" />
-        </label>
-        <label>
-          Elselskabstillæg
-          <input type="number" id="elselskab" step="0.1" />
-        </label>
-
-        <button type="submit" class="btn-primary">Gem indstillinger</button>
+        <button type="submit" class="btn-primary">Gem forbindelsesindstillinger</button>
         <div id="settings-feedback" class="feedback hidden"></div>
       </form>
 
+      <!-- Afgifter (hentes fra og gemmes på backend) -->
+      <div class="settings-form" style="margin-top:16px">
+        <div class="settings-section-title">Afgifter og abonnementer</div>
+
+        <div class="cfg-grid">
+          <label>Elafgift (øre/kWh)<input type="number" id="cfg-elafgift" step="0.01" /></label>
+          <label>Systemtarif (øre/kWh)<input type="number" id="cfg-systemtarif" step="0.01" /></label>
+          <label>Transmissions nettarif (øre/kWh)<input type="number" id="cfg-transmissionstarif" step="0.01" /></label>
+          <label>Elselskabstillæg (øre/kWh)<input type="number" id="cfg-elselskab" step="0.01" /></label>
+        </div>
+
+        <div class="settings-section-title" style="margin-top:4px">Nettarif (øre/kWh)</div>
+        <div class="cfg-grid">
+          <label>T1 · 00–06<input type="number" id="cfg-t1" step="0.01" /></label>
+          <label>T2 · 06–17<input type="number" id="cfg-t2" step="0.01" /></label>
+          <label>T3 · 17–21<input type="number" id="cfg-t3" step="0.01" /></label>
+          <label>T4 · 21–24<input type="number" id="cfg-t4" step="0.01" /></label>
+        </div>
+
+        <div class="settings-section-title" style="margin-top:4px">Faste udgifter (kr./md.)</div>
+        <div class="cfg-grid">
+          <label>El abonnement<input type="number" id="cfg-abonnement" step="0.01" /></label>
+          <label>TSO System Abonnement<input type="number" id="cfg-tso" step="0.01" /></label>
+          <label>Net abo C egenproducent<input type="number" id="cfg-net-abo" step="0.01" /></label>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-top:4px">
+          <button type="button" id="afgifter-hent" class="btn-secondary" style="flex:1">Hent fra backend</button>
+          <button type="button" id="afgifter-gem" class="btn-primary" style="flex:1">Gem til backend</button>
+        </div>
+        <div id="afgifter-feedback" class="feedback hidden"></div>
+      </div>
+
+      <!-- Diagnostik -->
       <div class="settings-form" style="margin-top:16px">
         <div class="settings-section-title">Diagnostik – test eloverblik</div>
         <label>
@@ -237,7 +255,7 @@
       <div class="info-box">
         <strong>Prisberegning pr. kWh:</strong><br/>
         Spotpris × 1,25 (moms) + tariffer inkl. moms / 100<br/>
-        <em>Spot hentes fra markedet ekskl. moms. Tariffer (elafgift, nettarif, systemtarif, transmissionstarif) samt faste abonnementer (el abo, TSO abo, net abo) er indstillet på backend og er allerede inkl. moms.</em>
+        <em>Spot hentes fra markedet ekskl. moms. Tariffer og abonnementer gemmes på backend og er inkl. moms.</em>
       </div>
     </section>
   </main>

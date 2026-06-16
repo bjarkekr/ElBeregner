@@ -497,6 +497,12 @@ tbody tr.pris-nu {
 .fark-dot.middel { background: #ffe082; }
 .fark-dot.dyr    { background: #ef9a9a; }
 
+.cfg-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .btn-secondary {
   background: #fff;
   color: var(--green);

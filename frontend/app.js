@@ -115,6 +115,20 @@ async function apiFetch(path) {
   return resp.json();
 }
 
+async function apiPost(path, data) {
+  const base = backendUrl();
+  if (!base) throw new Error('Backend URL er ikke konfigureret. Gå til Indstillinger og angiv din Railway-URL.');
+  const headers = { 'Content-Type': 'application/json' };
+  if (settings.apiKey) headers['X-API-Key'] = settings.apiKey;
+  const resp = await fetch(base + path, { method: 'POST', headers, body: JSON.stringify(data) });
+  if (!resp.ok) {
+    let msg;
+    try { msg = (await resp.json()).detail; } catch { msg = resp.statusText; }
+    throw new Error(msg || `Serverfejl ${resp.status}`);
+  }
+  return resp.json();
+}
+
 // ─── Tab navigation ────────────────────────────────────────────────────────
 let currentTab = 'forbrug';
 const TABS_WITH_MONTH_PICKER = new Set(['forbrug', 'produktion']);
@@ -133,6 +147,7 @@ function switchTab(tab) {
   if (tab === 'produktion') loadProduktion();
   if (tab === 'historik' && !historikLoaded) loadHistorik();
   if (tab === 'priser') loadPriser();
+  if (tab === 'indstillinger' && backendUrl()) loadAfgifter();
 }
 
 document.querySelectorAll('.tab').forEach(btn => {
@@ -677,12 +692,80 @@ document.getElementById('settings-form').addEventListener('submit', (e) => {
   historikLoaded = false;
   document.getElementById('zone-badge').textContent = settings.zone || 'DK1';
   const fb = document.getElementById('settings-feedback');
-  fb.textContent = 'Indstillinger gemt!';
+  fb.textContent = 'Forbindelsesindstillinger gemt!';
   fb.className = 'feedback success';
   fb.classList.remove('hidden');
   setTimeout(() => fb.classList.add('hidden'), 3000);
-  switchTab('forbrug');
-  loadForbrug();
+  if (backendUrl()) loadAfgifter();
+});
+
+function afgifterFeedback(msg, ok) {
+  const fb = document.getElementById('afgifter-feedback');
+  fb.textContent = msg;
+  fb.className = `feedback ${ok ? 'success' : 'error'}`;
+  fb.classList.remove('hidden');
+  if (ok) setTimeout(() => fb.classList.add('hidden'), 3000);
+}
+
+function populateAfgifterForm(a) {
+  document.getElementById('cfg-elafgift').value = a.elafgift_ore ?? '';
+  document.getElementById('cfg-systemtarif').value = a.systemtarif_ore ?? '';
+  document.getElementById('cfg-transmissionstarif').value = a.transmissionstarif_ore ?? '';
+  document.getElementById('cfg-elselskab').value = a.elselskab_tillæg_ore ?? '';
+  document.getElementById('cfg-t1').value = a.nettarif_t1_ore ?? '';
+  document.getElementById('cfg-t2').value = a.nettarif_t2_ore ?? '';
+  document.getElementById('cfg-t3').value = a.nettarif_t3_ore ?? '';
+  document.getElementById('cfg-t4').value = a.nettarif_t4_ore ?? '';
+  document.getElementById('cfg-abonnement').value = a.abonnement_kr ?? '';
+  document.getElementById('cfg-tso').value = a.tso_abonnement_kr ?? '';
+  document.getElementById('cfg-net-abo').value = a.net_abo_kr ?? '';
+}
+
+async function loadAfgifter() {
+  try {
+    const data = await apiFetch('/api/afgifter');
+    populateAfgifterForm(data);
+  } catch (err) {
+    afgifterFeedback('Kunne ikke hente afgifter: ' + err.message, false);
+  }
+}
+
+document.getElementById('afgifter-hent').addEventListener('click', async () => {
+  try {
+    const data = await apiFetch('/api/afgifter');
+    populateAfgifterForm(data);
+    afgifterFeedback('Hentet fra backend.', true);
+  } catch (err) {
+    afgifterFeedback('Fejl: ' + err.message, false);
+  }
+});
+
+document.getElementById('afgifter-gem').addEventListener('click', async () => {
+  const payload = {
+    elafgift_ore: parseFloat(document.getElementById('cfg-elafgift').value),
+    systemtarif_ore: parseFloat(document.getElementById('cfg-systemtarif').value),
+    transmissionstarif_ore: parseFloat(document.getElementById('cfg-transmissionstarif').value),
+    'elselskab_tillæg_ore': parseFloat(document.getElementById('cfg-elselskab').value),
+    nettarif_t1_ore: parseFloat(document.getElementById('cfg-t1').value),
+    nettarif_t2_ore: parseFloat(document.getElementById('cfg-t2').value),
+    nettarif_t3_ore: parseFloat(document.getElementById('cfg-t3').value),
+    nettarif_t4_ore: parseFloat(document.getElementById('cfg-t4').value),
+    abonnement_kr: parseFloat(document.getElementById('cfg-abonnement').value),
+    tso_abonnement_kr: parseFloat(document.getElementById('cfg-tso').value),
+    net_abo_kr: parseFloat(document.getElementById('cfg-net-abo').value),
+  };
+  // Fjern felter med ugyldige værdier
+  for (const k of Object.keys(payload)) {
+    if (isNaN(payload[k])) delete payload[k];
+  }
+  try {
+    const data = await apiPost('/api/afgifter', payload);
+    populateAfgifterForm(data);
+    maanedCache = {};
+    afgifterFeedback('Gemt! Beregninger bruger nu de nye værdier.', true);
+  } catch (err) {
+    afgifterFeedback('Fejl: ' + err.message, false);
+  }
 });
 
 // ─── DEBUG ─────────────────────────────────────────────────────────────────
