@@ -155,10 +155,10 @@ async function loadMaaned() {
 function renderMaaned(data) {
   showMaanedState('data');
 
-  document.getElementById('stat-kwh').textContent = fmtKwh(data.total_kwh);
+  document.getElementById('stat-kwh').textContent = fmtKwh(data.forbrug_kwh ?? data.total_kwh);
+  document.getElementById('stat-prod').textContent = fmtKwh(data.produktion_kwh ?? 0);
   document.getElementById('stat-kr').textContent = fmtKr(data.total_kr);
   document.getElementById('stat-spot').textContent = fmtOre(data.gns_spotpris_kwh);
-  document.getElementById('stat-timer').textContent = data.timer.length;
 
   // Manglende timer advarsel
   const advarsel = document.getElementById('manglende-advarsel');
@@ -173,43 +173,57 @@ function renderMaaned(data) {
 }
 
 function renderMaanedChart(timer) {
-  // Sample every hour for display (max 744 points)
   const labels = timer.map(t => utcToHourLabel(t.time));
   const kwh = timer.map(t => t.kwh);
-  const spot = timer.map(t => parseFloat((t.spotpris_kwh * 100).toFixed(2))); // convert to øre
+  const prod = timer.map(t => t.produktion_kwh ?? 0);
+  const spot = timer.map(t => parseFloat((t.spotpris_kwh * 100).toFixed(2)));
+  const harProduktion = prod.some(v => v > 0);
 
   if (maanedChart) { maanedChart.destroy(); maanedChart = null; }
 
+  const datasets = [
+    {
+      type: 'bar',
+      label: 'Forbrug fra net (kWh)',
+      data: kwh,
+      backgroundColor: 'rgba(76, 175, 80, 0.6)',
+      borderColor: '#2e7d32',
+      borderWidth: 0,
+      yAxisID: 'yKwh',
+      order: 2,
+    },
+  ];
+
+  if (harProduktion) {
+    datasets.push({
+      type: 'bar',
+      label: 'Produktion til net (kWh)',
+      data: prod,
+      backgroundColor: 'rgba(255, 167, 38, 0.65)',
+      borderColor: '#e65100',
+      borderWidth: 0,
+      yAxisID: 'yKwh',
+      order: 3,
+    });
+  }
+
+  datasets.push({
+    type: 'line',
+    label: 'Spotpris (øre/kWh)',
+    data: spot,
+    borderColor: '#1565c0',
+    backgroundColor: 'rgba(21, 101, 192, 0.06)',
+    borderWidth: 2,
+    pointRadius: 0,
+    tension: 0.3,
+    yAxisID: 'ySpot',
+    order: 1,
+    fill: true,
+  });
+
   const ctx = document.getElementById('maaned-chart').getContext('2d');
   maanedChart = new Chart(ctx, {
-    data: {
-      labels,
-      datasets: [
-        {
-          type: 'bar',
-          label: 'Forbrug (kWh)',
-          data: kwh,
-          backgroundColor: 'rgba(76, 175, 80, 0.6)',
-          borderColor: '#2e7d32',
-          borderWidth: 0,
-          yAxisID: 'yKwh',
-          order: 2,
-        },
-        {
-          type: 'line',
-          label: 'Spotpris (øre/kWh)',
-          data: spot,
-          borderColor: '#e65100',
-          backgroundColor: 'rgba(230, 81, 0, 0.08)',
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.3,
-          yAxisID: 'ySpot',
-          order: 1,
-          fill: true,
-        },
-      ],
-    },
+    data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
@@ -219,19 +233,14 @@ function renderMaanedChart(timer) {
         tooltip: {
           callbacks: {
             label: (ctx) => {
-              if (ctx.datasetIndex === 0) return ` ${ctx.parsed.y.toFixed(3)} kWh`;
-              return ` ${ctx.parsed.y.toFixed(1)} øre/kWh`;
+              if (ctx.dataset.yAxisID === 'ySpot') return ` ${ctx.parsed.y.toFixed(1)} øre/kWh`;
+              return ` ${ctx.parsed.y.toFixed(3)} kWh`;
             },
           },
         },
       },
       scales: {
-        x: {
-          ticks: {
-            maxTicksLimit: 24,
-            font: { size: 10 },
-          },
-        },
+        x: { ticks: { maxTicksLimit: 24, font: { size: 10 } } },
         yKwh: {
           type: 'linear',
           position: 'left',
@@ -248,7 +257,6 @@ function renderMaanedChart(timer) {
     },
   });
 
-  // Fix chart canvas height
   document.querySelector('.chart-wrap').style.height = '300px';
 }
 
@@ -298,7 +306,8 @@ async function loadHistorik() {
 function renderHistorik(rows) {
   const labels = rows.map(r => `${MÅNEDER[r.maaned - 1].slice(0,3)} ${r.aar}`);
   const krData = rows.map(r => r.total_kr);
-  const kwhData = rows.map(r => r.total_kwh);
+  const kwhData = rows.map(r => r.forbrug_kwh ?? r.total_kwh);
+  const prodData = rows.map(r => r.produktion_kwh ?? 0);
 
   if (historikChart) { historikChart.destroy(); historikChart = null; }
 
@@ -318,9 +327,20 @@ function renderHistorik(rows) {
         },
         {
           type: 'line',
-          label: 'Forbrug (kWh)',
+          label: 'Forbrug fra net (kWh)',
           data: kwhData,
           borderColor: '#1565c0',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: 4,
+          tension: 0.3,
+          yAxisID: 'yKwh',
+        },
+        {
+          type: 'line',
+          label: 'Produktion til net (kWh)',
+          data: prodData,
+          borderColor: '#e65100',
           backgroundColor: 'transparent',
           borderWidth: 2,
           pointRadius: 4,
@@ -353,10 +373,13 @@ function renderHistorik(rows) {
   const tbody = document.getElementById('historik-tbody');
   tbody.innerHTML = '';
   [...rows].reverse().forEach(r => {
+    const forbrug = r.forbrug_kwh ?? r.total_kwh;
+    const prod = r.produktion_kwh ?? 0;
     const tr = document.createElement('tr');
     tr.innerHTML = `
       <td>${MÅNEDER[r.maaned - 1]} ${r.aar}</td>
-      <td>${r.total_kwh != null ? r.total_kwh.toLocaleString('da-DK', {maximumFractionDigits:1}) : '—'}</td>
+      <td>${forbrug != null ? forbrug.toLocaleString('da-DK', {maximumFractionDigits:1}) : '—'}</td>
+      <td>${prod > 0 ? prod.toLocaleString('da-DK', {maximumFractionDigits:1}) : '—'}</td>
       <td>${r.gns_spotpris_kwh != null ? (r.gns_spotpris_kwh * 100).toLocaleString('da-DK', {maximumFractionDigits:1}) + ' øre' : '—'}</td>
       <td><strong>${r.total_kr != null ? r.total_kr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</strong></td>
     `;

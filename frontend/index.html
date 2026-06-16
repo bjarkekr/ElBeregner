@@ -46,7 +46,11 @@
         <div class="stats-grid">
           <div class="stat-card">
             <div class="stat-value" id="stat-kwh">—</div>
-            <div class="stat-label">kWh forbrug</div>
+            <div class="stat-label">Forbrug fra net</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-prod">—</div>
+            <div class="stat-label">Produktion til net</div>
           </div>
           <div class="stat-card highlight">
             <div class="stat-value" id="stat-kr">—</div>
@@ -55,10 +59,6 @@
           <div class="stat-card">
             <div class="stat-value" id="stat-spot">—</div>
             <div class="stat-label">gns. spotpris</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-timer">—</div>
-            <div class="stat-label">timer med data</div>
           </div>
         </div>
 
@@ -86,7 +86,8 @@
             <thead>
               <tr>
                 <th>Måned</th>
-                <th>kWh</th>
+                <th>Forbrug</th>
+                <th>Produktion</th>
                 <th>Gns. spot</th>
                 <th>Total kr.</th>
               </tr>

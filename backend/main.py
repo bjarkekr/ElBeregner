@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
-app = FastAPI(title="ElBeregner API", version="1.0.0")
+app = FastAPI(title="ElBeregner API", version="2.0.0")
 
 # Config from environment
 ELOVERBLIK_TOKEN = os.getenv("ELOVERBLIK_TOKEN", "").strip()
@@ -57,7 +57,16 @@ async def startup():
         _db_pool = await asyncpg.create_pool(url, min_size=1, max_size=5)
         async with _db_pool.acquire() as conn:
             await conn.execute("""
+                CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY)
+            """)
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS forbrug (
+                    hour_utc TEXT PRIMARY KEY,
+                    kwh REAL NOT NULL
+                )
+            """)
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS produktion (
                     hour_utc TEXT PRIMARY KEY,
                     kwh REAL NOT NULL
                 )
@@ -70,6 +79,15 @@ async def startup():
                     PRIMARY KEY (hour_utc, zone)
                 )
             """)
+            # One-time migration: clear forbrug table that contained production data
+            already = await conn.fetchval(
+                "SELECT 1 FROM migrations WHERE name = 'v2_split_forbrug_produktion'"
+            )
+            if not already:
+                await conn.execute("TRUNCATE forbrug")
+                await conn.execute(
+                    "INSERT INTO migrations (name) VALUES ('v2_split_forbrug_produktion')"
+                )
 
 
 @app.on_event("shutdown")
@@ -171,11 +189,25 @@ async def get_metering_point_id(token: str) -> str:
     return _mp_cache["mp_id"]
 
 
-def parse_timeseries(result: list) -> dict[str, float]:
-    consumption: dict[str, float] = {}
+def parse_timeseries_split(result: list) -> tuple[dict[str, float], dict[str, float]]:
+    """
+    Separerer eloverblik-svar i (forbrug, produktion).
+
+    eloverblik businessType skelner mellem retninger:
+      'A04' = forbrug (import fra nettet, el brugt i huset fra grid)
+      Andre  = produktion (eksport til nettet, solceller mv.)
+
+    Begge TimeSeries bruger out_Quantity.quantity som feltnavn.
+    """
+    forbrug: dict[str, float] = {}
+    produktion: dict[str, float] = {}
+
     for item in result:
         doc = item.get("MyEnergyData_MarketDocument", {})
         for ts in doc.get("TimeSeries", []):
+            business_type = ts.get("businessType", "")
+            target = forbrug if business_type == "A04" else produktion
+
             for period in ts.get("Period", []):
                 interval_start = period.get("timeInterval", {}).get("start", "")
                 if not interval_start:
@@ -186,14 +218,19 @@ def parse_timeseries(result: list) -> dict[str, float]:
                     continue
                 for point in period.get("Point", []):
                     pos = int(point.get("position", 1)) - 1
-                    qty_raw = point.get("out_Quantity.quantity", "0") or "0"
+                    qty_raw = (
+                        point.get("out_Quantity.quantity")
+                        or point.get("in_Quantity.quantity")
+                        or "0"
+                    )
                     try:
                         kwh = float(qty_raw)
                     except ValueError:
                         kwh = 0.0
                     key = (start_dt + timedelta(hours=pos)).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    consumption[key] = consumption.get(key, 0.0) + kwh
-    return consumption
+                    target[key] = target.get(key, 0.0) + kwh
+
+    return forbrug, produktion
 
 
 # ─── DB helpers ─────────────────────────────────────────────────────────────
@@ -215,6 +252,27 @@ async def db_save_forbrug(data: dict[str, float]):
     async with _db_pool.acquire() as conn:
         await conn.executemany(
             "INSERT INTO forbrug (hour_utc, kwh) VALUES ($1, $2) ON CONFLICT (hour_utc) DO UPDATE SET kwh = $2",
+            list(data.items())
+        )
+
+
+async def db_get_produktion(fra: str, til_excl: str) -> dict[str, float] | None:
+    if not _db_pool:
+        return None
+    async with _db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT hour_utc, kwh FROM produktion WHERE hour_utc >= $1 AND hour_utc < $2 ORDER BY hour_utc",
+            fra + "T00:00:00Z", til_excl + "T00:00:00Z"
+        )
+    return {r["hour_utc"]: r["kwh"] for r in rows} if rows else None
+
+
+async def db_save_produktion(data: dict[str, float]):
+    if not _db_pool or not data:
+        return
+    async with _db_pool.acquire() as conn:
+        await conn.executemany(
+            "INSERT INTO produktion (hour_utc, kwh) VALUES ($1, $2) ON CONFLICT (hour_utc) DO UPDATE SET kwh = $2",
             list(data.items())
         )
 
@@ -242,47 +300,6 @@ async def db_save_spotpriser(data: dict[str, float], zone: str):
 
 # ─── API endpoints ──────────────────────────────────────────────────────────
 
-@app.get("/api/forbrug")
-async def get_forbrug(
-    fra: str = Query(...),
-    til: str = Query(...),
-    x_api_key: Optional[str] = Header(default=None),
-):
-    check_api_key(x_api_key)
-    try:
-        datetime.strptime(fra, "%Y-%m-%d")
-        datetime.strptime(til, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Dato skal være YYYY-MM-DD")
-
-    data = await _fetch_forbrug_raw(fra, til)
-    return {
-        "fra": fra, "til": til,
-        "timeforbrug": data["timeforbrug"],
-        "total_kwh": round(sum(data["timeforbrug"].values()), 3),
-        "fra_cache": data.get("fra_cache", False),
-    }
-
-
-@app.get("/api/spotpriser")
-async def get_spotpriser(
-    fra: str = Query(...),
-    til: str = Query(...),
-    zone: Optional[str] = Query(None),
-    x_api_key: Optional[str] = Header(default=None),
-):
-    check_api_key(x_api_key)
-    try:
-        datetime.strptime(fra, "%Y-%m-%d")
-        datetime.strptime(til, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Dato skal være YYYY-MM-DD")
-
-    pris_zone = zone or PRISZONE
-    data = await _fetch_spotpriser_raw(fra, til, pris_zone)
-    return {"fra": fra, "til": til, "zone": pris_zone, "spotpriser": data["spotpriser"]}
-
-
 @app.get("/api/maaned")
 async def get_maaned(
     aar: int = Query(...),
@@ -306,27 +323,33 @@ async def get_maaned(
 
     if kun_cache:
         timeforbrug = await db_get_forbrug(fra, til_excl) or {}
+        timeprod = await db_get_produktion(fra, til_excl) or {}
         spotpriser = await db_get_spotpriser(fra, til_excl, PRISZONE) or {}
         if not timeforbrug:
             raise HTTPException(status_code=404, detail="Ingen data i database for denne måned.")
+        fra_cache = True
     else:
-        forbrug_data, spot_data = await asyncio.gather(
-            asyncio.create_task(_fetch_forbrug_raw(fra, til)),
+        elov_data, spot_data = await asyncio.gather(
+            asyncio.create_task(_fetch_eloverblik_raw(fra, til)),
             asyncio.create_task(_fetch_spotpriser_raw(fra, til, PRISZONE)),
         )
-        timeforbrug = forbrug_data["timeforbrug"]
+        timeforbrug = elov_data["forbrug"]
+        timeprod = elov_data["produktion"]
         spotpriser = spot_data["spotpriser"]
+        fra_cache = elov_data.get("fra_cache", False)
+
     fast_ore = ELAFGIFT_ORE + SYSTEMTARIF_ORE + TRANSMISSIONSTARIF_ORE + ELSELSKAB_TILLÆG_ORE
 
     timer = []
     total_kr_forbrug = 0.0
-    total_kwh = 0.0
+    total_forbrug_kwh = 0.0
     manglende_timer = []
     spotpris_sum = 0.0
     spotpris_count = 0
 
     for hour in sorted(timeforbrug.keys()):
         kwh = timeforbrug[hour]
+        prod_kwh = timeprod.get(hour, 0.0)
         spot = spotpriser.get(hour)
         if spot is None:
             manglende_timer.append(hour)
@@ -335,24 +358,30 @@ async def get_maaned(
         pris_per_kwh = spot * (1 + MOMS) + (fast_ore + nettarif) / 100.0
         kr = round(kwh * pris_per_kwh, 4)
         total_kr_forbrug += kr
-        total_kwh += kwh
+        total_forbrug_kwh += kwh
         spotpris_sum += spot
         spotpris_count += 1
         timer.append({
             "time": hour,
             "kwh": round(kwh, 4),
+            "produktion_kwh": round(prod_kwh, 4),
             "spotpris_kwh": round(spot, 6),
             "nettarif_ore": nettarif,
             "pris_per_kwh": round(pris_per_kwh, 4),
             "kr": kr,
         })
 
+    total_prod_kwh = round(sum(timeprod.values()), 3)
+    netto_kwh = round(total_forbrug_kwh - total_prod_kwh, 3)
     gns_spotpris = (spotpris_sum / spotpris_count) if spotpris_count else 0.0
     total_kr = round(total_kr_forbrug + ABONNEMENT_KR, 2)
 
     return {
         "aar": aar, "maaned": maaned, "fra": fra, "til": til, "zone": PRISZONE,
-        "total_kwh": round(total_kwh, 3),
+        "forbrug_kwh": round(total_forbrug_kwh, 3),
+        "produktion_kwh": total_prod_kwh,
+        "netto_kwh": netto_kwh,
+        "total_kwh": round(total_forbrug_kwh, 3),  # backward compat
         "total_kr_forbrug": round(total_kr_forbrug, 2),
         "abonnement_kr": ABONNEMENT_KR,
         "total_kr": total_kr,
@@ -369,7 +398,7 @@ async def get_maaned(
             "abonnement_kr": ABONNEMENT_KR,
             "moms_pct": MOMS * 100,
         },
-        "fra_cache": True if kun_cache else forbrug_data.get("fra_cache", False),
+        "fra_cache": fra_cache,
         "timer": timer,
         "manglende_timer_antal": len(manglende_timer),
     }
@@ -386,7 +415,6 @@ async def get_priser_dag(
     tomorrow_dk = today_dk + timedelta(days=1)
     day_after_tomorrow_dk = today_dk + timedelta(days=2)
 
-    # Compute exact UTC boundaries for today/tomorrow in DK local time
     start_utc = datetime(today_dk.year, today_dk.month, today_dk.day,
                          tzinfo=DK_TZ).astimezone(ZoneInfo("UTC"))
     end_utc = datetime(day_after_tomorrow_dk.year, day_after_tomorrow_dk.month,
@@ -406,7 +434,6 @@ async def get_priser_dag(
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 
-    # Aggregate 15-min records to hourly
     summer: dict[str, list] = {}
     for r in resp.json().get("records", []):
         t = r.get("TimeUTC", "")
@@ -469,7 +496,7 @@ async def debug_forbrug(
     dato: str = Query(...),
     x_api_key: Optional[str] = Header(default=None),
 ):
-    """Returnerer rå eloverblik-svar for én dag – til diagnostik."""
+    """Rå eloverblik-svar for én dag — viser businessType pr. TimeSeries."""
     check_api_key(x_api_key)
     dato_dt = datetime.strptime(dato, "%Y-%m-%d")
     next_dato = dato_dt + timedelta(days=1)
@@ -487,17 +514,19 @@ async def debug_forbrug(
         )
 
     raw = resp.json()
-    parsed = parse_timeseries(raw.get("result", []))
+    forbrug_parsed, prod_parsed = parse_timeseries_split(raw.get("result", []))
 
-    # Strukturanalyse uden at returnere alle data-værdier
     result_items = raw.get("result", [])
     struktur = []
     for item in result_items:
         doc = item.get("MyEnergyData_MarketDocument") or {}
         for ts in (doc.get("TimeSeries") or []):
+            business_type = ts.get("businessType", "—")
             for period in (ts.get("Period") or []):
                 pts = period.get("Point") or []
                 struktur.append({
+                    "business_type": business_type,
+                    "type_tolket": "forbrug" if business_type == "A04" else "produktion",
                     "interval_start": (period.get("timeInterval") or {}).get("start"),
                     "interval_end": (period.get("timeInterval") or {}).get("end"),
                     "antal_punkter": len(pts),
@@ -508,8 +537,10 @@ async def debug_forbrug(
         "kald": f"from={dato} to={next_dato_str}",
         "http_status": resp.status_code,
         "result_items": len(result_items),
-        "parsed_timer": len(parsed),
-        "parsed_kwh_total": round(sum(parsed.values()), 3),
+        "forbrug_timer": len(forbrug_parsed),
+        "forbrug_kwh_total": round(sum(forbrug_parsed.values()), 3),
+        "produktion_timer": len(prod_parsed),
+        "produktion_kwh_total": round(sum(prod_parsed.values()), 3),
         "struktur": struktur,
         "rå_result": result_items,
     }
@@ -545,25 +576,25 @@ async def status():
 
 # ─── Internal fetch helpers ──────────────────────────────────────────────────
 
-async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
+async def _fetch_eloverblik_raw(fra: str, til: str) -> dict:
+    """Henter forbrug + produktion fra eloverblik. Cacher afsluttede måneder."""
     til_dt = datetime.strptime(til, "%Y-%m-%d")
     til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
     # Brug cache til afsluttede måneder — kræv mindst 24 timer for at undgå partial-cache
     if not is_current_month(fra):
-        cached = await db_get_forbrug(fra, til_excl)
-        if cached and len(cached) >= 24:
-            return {"timeforbrug": cached, "fra_cache": True}
+        cached_f = await db_get_forbrug(fra, til_excl)
+        if cached_f and len(cached_f) >= 24:
+            cached_p = await db_get_produktion(fra, til_excl) or {}
+            return {"forbrug": cached_f, "produktion": cached_p, "fra_cache": True}
 
     token = await get_access_token()
     mp_id = await get_metering_point_id(token)
     body = {"meteringPoints": {"meteringPoint": [mp_id]}}
 
-    # Hent i 14-dages blokke — eloverblik returnerer tom TimeSeries ved < 2-dages vinduer.
-    # chunk_end begrænses aldrig, men resultater filtreres til [fra, til_excl).
     fra_dt = datetime.strptime(fra, "%Y-%m-%d")
-    til_dt = datetime.strptime(til, "%Y-%m-%d")
-    consumption: dict[str, float] = {}
+    forbrug: dict[str, float] = {}
+    produktion: dict[str, float] = {}
     chunk_start = fra_dt
 
     async with httpx.AsyncClient(timeout=60) as client:
@@ -584,14 +615,24 @@ async def _fetch_forbrug_raw(fra: str, til: str) -> dict:
                     json=body,
                 )
             if resp.status_code != 200:
-                raise HTTPException(status_code=502, detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({fra_s}–{til_s}): {resp.text[:300]}")
-            for hour_key, kwh in parse_timeseries(resp.json().get("result", [])).items():
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Eloverblik tidsseriedata fejl: {resp.status_code} ({fra_s}–{til_s}): {resp.text[:300]}"
+                )
+            f_chunk, p_chunk = parse_timeseries_split(resp.json().get("result", []))
+            for hour_key, kwh in f_chunk.items():
                 if fra <= hour_key[:10] < til_excl:
-                    consumption[hour_key] = consumption.get(hour_key, 0.0) + kwh
+                    forbrug[hour_key] = forbrug.get(hour_key, 0.0) + kwh
+            for hour_key, kwh in p_chunk.items():
+                if fra <= hour_key[:10] < til_excl:
+                    produktion[hour_key] = produktion.get(hour_key, 0.0) + kwh
             chunk_start = chunk_end
 
-    await db_save_forbrug(consumption)
-    return {"timeforbrug": consumption, "fra_cache": False}
+    await asyncio.gather(
+        db_save_forbrug(forbrug),
+        db_save_produktion(produktion),
+    )
+    return {"forbrug": forbrug, "produktion": produktion, "fra_cache": False}
 
 
 async def _fetch_spotpriser_raw(fra: str, til: str, zone: str = PRISZONE) -> dict:
