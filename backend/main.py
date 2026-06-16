@@ -614,18 +614,16 @@ async def _fetch_eloverblik_raw(fra: str, til: str) -> dict:
             chunk_end = min(chunk_start + timedelta(days=14), til_dt + timedelta(days=1))
             fra_s = chunk_start.strftime("%Y-%m-%d")
             til_s = chunk_end.strftime("%Y-%m-%d")
-            resp = await client.post(
-                f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra_s}/{til_s}/Hour",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-                json=body,
-            )
-            if resp.status_code == 503:
-                await asyncio.sleep(3)
+            for forsøg in range(4):
                 resp = await client.post(
                     f"{ELOVERBLIK_BASE}/meterdata/gettimeseries/{fra_s}/{til_s}/Hour",
                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                     json=body,
                 )
+                if resp.status_code != 503:
+                    break
+                if forsøg < 3:
+                    await asyncio.sleep(5 * (forsøg + 1))  # 5s, 10s, 15s
             if resp.status_code != 200:
                 raise HTTPException(
                     status_code=502,
