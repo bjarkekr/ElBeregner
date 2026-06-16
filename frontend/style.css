@@ -363,6 +363,14 @@ tbody tr:hover { background: var(--green-pale); }
   padding-bottom: 10px;
 }
 
+.chart-day-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: center;
+}
+
 .chart-back-btn {
   background: #fff;
   border: 1px solid var(--border);

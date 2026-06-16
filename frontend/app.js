@@ -248,6 +248,15 @@ function renderForbrugChart() {
     document.getElementById('forbrug-chart-label').textContent =
       dkDateToFullLabel(forbrugDrillDate);
 
+    const allDates = [...new Set(cachedTimer.map(t => utcToDkDateKey(t.time)))].sort();
+    const idx = allDates.indexOf(forbrugDrillDate);
+    const prevBtn = document.getElementById('forbrug-prev-day');
+    const nextBtn = document.getElementById('forbrug-next-day');
+    prevBtn.disabled = idx <= 0;
+    nextBtn.disabled = idx >= allDates.length - 1;
+    prevBtn.onclick = () => { forbrugDrillDate = allDates[idx - 1]; renderForbrugChart(); };
+    nextBtn.onclick = () => { forbrugDrillDate = allDates[idx + 1]; renderForbrugChart(); };
+
     const dayTimer = cachedTimer.filter(t => utcToDkDateKey(t.time) === forbrugDrillDate);
     const labels = dayTimer.map(t => utcToHourLabel(t.time));
     const kwh = dayTimer.map(t => t.kwh);
@@ -364,6 +373,15 @@ function renderProduktionChart() {
     nav.classList.remove('hidden');
     document.getElementById('produktion-chart-label').textContent =
       dkDateToFullLabel(produktionDrillDate);
+
+    const allDates = [...new Set(cachedTimer.map(t => utcToDkDateKey(t.time)))].sort();
+    const idx = allDates.indexOf(produktionDrillDate);
+    const prevBtn = document.getElementById('produktion-prev-day');
+    const nextBtn = document.getElementById('produktion-next-day');
+    prevBtn.disabled = idx <= 0;
+    nextBtn.disabled = idx >= allDates.length - 1;
+    prevBtn.onclick = () => { produktionDrillDate = allDates[idx - 1]; renderProduktionChart(); };
+    nextBtn.onclick = () => { produktionDrillDate = allDates[idx + 1]; renderProduktionChart(); };
 
     const dayTimer = cachedTimer.filter(t => utcToDkDateKey(t.time) === produktionDrillDate);
     const labels = dayTimer.map(t => utcToHourLabel(t.time));
