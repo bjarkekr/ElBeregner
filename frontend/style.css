@@ -355,6 +355,35 @@ tbody tr:hover { background: var(--green-pale); }
   color: #1b5e20;
 }
 
+/* CHART DRILL-DOWN NAV */
+.chart-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 10px;
+}
+
+.chart-back-btn {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 12px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--green);
+  cursor: pointer;
+  transition: background 0.12s;
+  white-space: nowrap;
+}
+.chart-back-btn:hover { background: var(--green-pale); }
+
+.chart-nav-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: capitalize;
+}
+
 /* PRISER TAB */
 .priser-topbar {
   display: flex;
