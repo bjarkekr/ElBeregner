@@ -151,9 +151,11 @@ function updateMonthLabel() {
   document.getElementById('month-label').textContent =
     `${MÅNEDER[currentMonth - 1]} ${currentYear}`;
   const now = new Date();
+  const isCurrentMonth = currentYear === now.getFullYear() && currentMonth === now.getMonth() + 1;
   const isCurrentOrFuture = currentYear > now.getFullYear() ||
     (currentYear === now.getFullYear() && currentMonth >= now.getMonth() + 1);
   document.getElementById('next-month').disabled = isCurrentOrFuture;
+  document.getElementById('maaned-refresh').classList.toggle('hidden', !isCurrentMonth);
 }
 
 function changeMonth(delta) {
@@ -169,6 +171,15 @@ function changeMonth(delta) {
 
 document.getElementById('prev-month').addEventListener('click', () => changeMonth(-1));
 document.getElementById('next-month').addEventListener('click', () => changeMonth(1));
+
+document.getElementById('maaned-refresh').addEventListener('click', () => {
+  const cacheKey = `${currentYear}-${pad(currentMonth)}`;
+  delete maanedCache[cacheKey];
+  forbrugDrillDate = null;
+  produktionDrillDate = null;
+  if (currentTab === 'forbrug') loadForbrug();
+  else if (currentTab === 'produktion') loadProduktion();
+});
 
 async function fetchMaanedData() {
   const cacheKey = `${currentYear}-${pad(currentMonth)}`;
