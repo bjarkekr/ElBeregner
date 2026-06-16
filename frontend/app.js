@@ -159,6 +159,7 @@ let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth() + 1;
 let maanedCache = {};
 let cachedTimer = [];        // current month's timer array (shared between tabs)
+let cachedAfgifter = {};     // afgifter from latest API response (inkl. salgs_fradrag_ore)
 let forbrugDrillDate = null; // null = month view, "YYYY-MM-DD" = day view
 let produktionDrillDate = null;
 
@@ -221,6 +222,22 @@ function spotDataset(data) {
   };
 }
 
+function afregningsprisDataset(data) {
+  return {
+    type: 'line',
+    label: 'Afregningspris (øre/kWh)',
+    data,
+    borderColor: '#e65100',
+    backgroundColor: 'rgba(230, 81, 0, 0.06)',
+    borderWidth: 2,
+    pointRadius: 2,
+    tension: 0.3,
+    yAxisID: 'ySpot',
+    order: 1,
+    fill: true,
+  };
+}
+
 // ─── FORBRUG VIEW ──────────────────────────────────────────────────────────
 let forbrugChart = null;
 
@@ -244,12 +261,11 @@ async function loadForbrug() {
 function renderForbrug(data) {
   showForbrugState('data');
   cachedTimer = data.timer;
+  cachedAfgifter = data.afgifter ?? {};
   forbrugDrillDate = null;
 
   document.getElementById('stat-forbrug-kwh').textContent = fmtKwh(data.forbrug_kwh ?? data.total_kwh);
-  document.getElementById('stat-netto-kr').textContent = fmtKr(data.netto_kr ?? data.total_kr);
   document.getElementById('stat-forbrug-kr').textContent = fmtKr(data.total_kr);
-  document.getElementById('stat-prod-kr').textContent = data.produktion_kr != null ? fmtKr(data.produktion_kr) : '—';
   document.getElementById('stat-forbrug-spot').textContent = fmtOre(data.gns_spotpris_kwh);
   document.getElementById('stat-forbrug-timer').textContent = data.timer.length;
 
@@ -380,12 +396,22 @@ async function loadProduktion() {
 function renderProduktion(data) {
   showProduktionState('data');
   cachedTimer = data.timer;
+  cachedAfgifter = data.afgifter ?? {};
   produktionDrillDate = null;
 
   const prodKwh = data.produktion_kwh ?? 0;
-  const timerMedSol = data.timer.filter(t => (t.produktion_kwh ?? 0) > 0).length;
+  const prodKr = data.produktion_kr ?? 0;
+  const nettoKr = data.netto_kr ?? data.total_kr;
+  const fradrag = cachedAfgifter.salgs_fradrag_ore ?? 0;
+  const timerMedSol = data.timer.filter(t => (t.produktion_kwh ?? 0) > 0);
+  const gnsSalg = timerMedSol.length > 0
+    ? timerMedSol.reduce((s, t) => s + Math.max(0, t.spotpris_kwh * 100 - fradrag), 0) / timerMedSol.length
+    : 0;
+
   document.getElementById('stat-prod-kwh').textContent = fmtKwh(prodKwh);
-  document.getElementById('stat-prod-timer').textContent = timerMedSol;
+  document.getElementById('stat-prod-kr').textContent = fmtKr(prodKr);
+  document.getElementById('stat-netto-kr').textContent = fmtKr(nettoKr);
+  document.getElementById('stat-salgs-spot').textContent = fmtOre(gnsSalg / 100);
 
   renderProduktionChart();
 }
@@ -411,10 +437,11 @@ function renderProduktionChart() {
     prevBtn.onclick = () => { produktionDrillDate = allDates[idx - 1]; renderProduktionChart(); };
     nextBtn.onclick = () => { produktionDrillDate = allDates[idx + 1]; renderProduktionChart(); };
 
+    const fradrag = cachedAfgifter.salgs_fradrag_ore ?? 0;
     const dayTimer = cachedTimer.filter(t => utcToDkDateKey(t.time) === produktionDrillDate);
     const labels = dayTimer.map(t => utcToHourLabel(t.time));
     const prod = dayTimer.map(t => t.produktion_kwh ?? 0);
-    const spot = dayTimer.map(t => parseFloat((t.spotpris_kwh * 100).toFixed(2)));
+    const salgspris = dayTimer.map(t => parseFloat(Math.max(0, t.spotpris_kwh * 100 - fradrag).toFixed(2)));
 
     produktionChart = new Chart(chartEl.getContext('2d'), {
       data: {
@@ -425,7 +452,7 @@ function renderProduktionChart() {
             backgroundColor: 'rgba(255, 167, 38, 0.7)', borderColor: '#e65100',
             borderWidth: 0, yAxisID: 'yKwh', order: 2,
           },
-          spotDataset(spot),
+          afregningsprisDataset(salgspris),
         ],
       },
       options: {
@@ -440,12 +467,13 @@ function renderProduktionChart() {
     // ── Månedsoversigt: daglige aggregater, klikbar ──
     nav.classList.add('hidden');
 
+    const fradrag = cachedAfgifter.salgs_fradrag_ore ?? 0;
     const days = groupByDkDay(cachedTimer);
     const sortedDates = Object.keys(days).sort();
     const labels = sortedDates.map(dkDateToShortLabel);
     const prod = sortedDates.map(d => parseFloat(days[d].produktion_kwh.toFixed(3)));
-    const spot = sortedDates.map(d =>
-      days[d].count > 0 ? parseFloat(((days[d].spotpris_sum / days[d].count) * 100).toFixed(2)) : 0
+    const salgspris = sortedDates.map(d =>
+      days[d].count > 0 ? parseFloat(Math.max(0, (days[d].spotpris_sum / days[d].count) * 100 - fradrag).toFixed(2)) : 0
     );
 
     produktionChart = new Chart(chartEl.getContext('2d'), {
@@ -457,7 +485,7 @@ function renderProduktionChart() {
             backgroundColor: 'rgba(255, 167, 38, 0.7)', borderColor: '#e65100',
             borderWidth: 0, yAxisID: 'yKwh', order: 2,
           },
-          spotDataset(spot),
+          afregningsprisDataset(salgspris),
         ],
       },
       options: {

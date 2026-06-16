@@ -1,4 +1,4 @@
-const CACHE_NAME = 'elberegner-v4';
+const CACHE_NAME = 'elberegner-v5';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
