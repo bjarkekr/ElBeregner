@@ -599,7 +599,7 @@ async def _fetch_eloverblik_raw(fra: str, til: str) -> dict:
 
     async with httpx.AsyncClient(timeout=60) as client:
         while chunk_start <= til_dt:
-            chunk_end = chunk_start + timedelta(days=14)
+            chunk_end = min(chunk_start + timedelta(days=14), til_dt + timedelta(days=1))
             fra_s = chunk_start.strftime("%Y-%m-%d")
             til_s = chunk_end.strftime("%Y-%m-%d")
             resp = await client.post(
