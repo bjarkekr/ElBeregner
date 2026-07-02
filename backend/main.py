@@ -176,12 +176,6 @@ def check_api_key(x_api_key: Optional[str]):
         raise HTTPException(status_code=401, detail="Ugyldig eller manglende API-nøgle.")
 
 
-def is_current_month(fra: str) -> bool:
-    now = datetime.utcnow()
-    fra_dt = datetime.strptime(fra, "%Y-%m-%d")
-    return fra_dt.year == now.year and fra_dt.month == now.month
-
-
 async def get_access_token() -> str:
     now = datetime.utcnow()
     if _token_cache["token"] and _token_cache["expires_at"] and now < _token_cache["expires_at"]:
@@ -741,10 +735,6 @@ async def _fetch_eloverblik_raw(fra: str, til: str) -> dict:
     cached_f = await db_get_forbrug(fra, til_excl) or {}
     cached_p = await db_get_produktion(fra, til_excl) or {}
 
-    # Afsluttede måneder med tilstrækkeligt data: brug cache direkte
-    if not is_current_month(fra) and len(cached_f) >= 24:
-        return {"forbrug": cached_f, "produktion": cached_p, "fra_cache": True}
-
     # Find dage der mangler data
     fra_dt = datetime.strptime(fra, "%Y-%m-%d")
     hours_per_utc_day: dict[str, int] = {}
@@ -806,11 +796,15 @@ async def _fetch_spotpriser_raw(fra: str, til: str, zone: str = PRISZONE) -> dic
     til_dt = datetime.strptime(til, "%Y-%m-%d")
     til_excl = (til_dt + timedelta(days=1)).strftime("%Y-%m-%d")
 
-    # Brug cache til afsluttede måneder — kræv mindst 24 timer for at undgå partial-cache
-    if not is_current_month(fra):
-        cached = await db_get_spotpriser(fra, til_excl, zone)
-        if cached and len(cached) >= 24:
-            return {"spotpriser": cached}
+    cached = await db_get_spotpriser(fra, til_excl, zone) or {}
+    fra_dt = datetime.strptime(fra, "%Y-%m-%d")
+    hours_per_utc_day: dict[str, int] = {}
+    for hour_key in cached:
+        day = hour_key[:10]
+        hours_per_utc_day[day] = hours_per_utc_day.get(day, 0) + 1
+
+    if not _missing_day_ranges(fra_dt, til_dt, hours_per_utc_day):
+        return {"spotpriser": cached}
 
     params = {
         "start": f"{fra}T00:00",
@@ -835,4 +829,4 @@ async def _fetch_spotpriser_raw(fra: str, til: str, zone: str = PRISZONE) -> dic
     priser = {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
 
     await db_save_spotpriser(priser, zone)
-    return {"spotpriser": priser}
+    return {"spotpriser": {**cached, **priser}}
