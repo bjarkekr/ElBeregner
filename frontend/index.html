@@ -130,19 +130,38 @@
 
     <!-- HISTORIK VIEW -->
     <section id="tab-historik" class="tab-content hidden">
-      <h2 class="section-title">Seneste 12 måneder</h2>
+      <div class="month-picker" id="historik-year-picker">
+        <button id="historik-prev-year" class="nav-btn" aria-label="Forrige år">&#8249;</button>
+        <span id="historik-year-label" class="month-label"></span>
+        <button id="historik-next-year" class="nav-btn" aria-label="Næste år">&#8250;</button>
+      </div>
 
       <div id="historik-spinner" class="spinner-wrap hidden"><div class="spinner"></div><p>Henter historik…</p></div>
       <div id="historik-error" class="error-box hidden"></div>
 
       <div id="historik-content" class="hidden">
-        <div class="chart-wrap">
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-historik-gns-kr">—</div>
+            <div class="stat-label" id="stat-historik-gns-kr-label">gns. kr./måned</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-historik-gns-kwh">—</div>
+            <div class="stat-label" id="stat-historik-gns-kwh-label">gns. kWh/måned</div>
+          </div>
+        </div>
+
+        <div class="chart-wrap" id="historik-chart-wrap">
+          <div id="historik-chart-nav" class="chart-nav hidden">
+            <button id="historik-back" class="chart-back-btn">&#8592; Måneder</button>
+            <span id="historik-chart-label" class="chart-nav-label"></span>
+          </div>
           <canvas id="historik-chart"></canvas>
         </div>
         <div class="table-wrap">
           <table id="historik-tabel">
             <thead>
-              <tr>
+              <tr id="historik-thead-row">
                 <th>Måned</th>
                 <th>Forbrug</th>
                 <th>Sol kWh</th>

@@ -841,7 +841,12 @@ async def _hent_spotpriser_fra_kilde(
         "sort": f"{time_felt} asc",
         "limit": 20000,
     }
-    resp = await client.get(url, params=params)
+    for forsøg in range(4):
+        resp = await client.get(url, params=params)
+        if resp.status_code != 429:
+            break
+        if forsøg < 3:
+            await asyncio.sleep(3 * (forsøg + 1))  # 3s, 6s, 9s
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 

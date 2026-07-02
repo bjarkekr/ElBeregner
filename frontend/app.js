@@ -30,6 +30,7 @@ function fmtOre(v) {
   return (v * 100).toLocaleString('da-DK', {minimumFractionDigits:1, maximumFractionDigits:1}) + ' øre/kWh';
 }
 function pad(n) { return String(n).padStart(2, '0'); }
+function round2(v) { return parseFloat(v.toFixed(3)); }
 
 function utcToHourLabel(isoUtc) {
   return new Date(isoUtc).toLocaleString('da-DK', {
@@ -47,10 +48,11 @@ function groupByDkDay(timer) {
   const days = {};
   for (const t of timer) {
     const dk = utcToDkDateKey(t.time);
-    if (!days[dk]) days[dk] = { kwh: 0, produktion_kwh: 0, kr: 0, spotpris_sum: 0, count: 0 };
+    if (!days[dk]) days[dk] = { kwh: 0, produktion_kwh: 0, kr: 0, produktion_kr: 0, spotpris_sum: 0, count: 0 };
     days[dk].kwh += t.kwh;
     days[dk].produktion_kwh += (t.produktion_kwh ?? 0);
     days[dk].kr += (t.kr ?? 0);
+    days[dk].produktion_kr += (t.produktion_kr ?? 0);
     days[dk].spotpris_sum += (t.spotpris_kwh ?? 0);
     days[dk].count++;
   }
@@ -518,9 +520,18 @@ document.getElementById('produktion-back').addEventListener('click', () => {
 // ─── HISTORIK VIEW ─────────────────────────────────────────────────────────
 let historikLoaded = false;
 let historikChart = null;
+let historikYear = new Date().getFullYear();
+let historikYearCache = {};       // { [year]: rows[] }
+let historikDrillMonth = null;    // null = årsvisning, ellers { aar, maaned }
+
+function updateHistorikYearLabel() {
+  document.getElementById('historik-year-label').textContent = String(historikYear);
+  document.getElementById('historik-next-year').disabled = historikYear >= new Date().getFullYear();
+}
 
 async function loadHistorik() {
   historikLoaded = true;
+  updateHistorikYearLabel();
   const spinner = document.getElementById('historik-spinner');
   const error = document.getElementById('historik-error');
   const content = document.getElementById('historik-content');
@@ -528,12 +539,15 @@ async function loadHistorik() {
   error.classList.add('hidden');
   content.classList.add('hidden');
 
-  const now = new Date();
-  const tasks = [];
-  for (let i = 11; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    tasks.push({ aar: d.getFullYear(), maaned: d.getMonth() + 1 });
+  if (historikYearCache[historikYear]) {
+    renderHistorikYearView(historikYearCache[historikYear]);
+    spinner.classList.add('hidden');
+    content.classList.remove('hidden');
+    return;
   }
+
+  const tasks = [];
+  for (let m = 1; m <= 12; m++) tasks.push({ aar: historikYear, maaned: m });
 
   try {
     const results = await Promise.allSettled(
@@ -543,8 +557,9 @@ async function loadHistorik() {
     results.forEach((r, i) => {
       if (r.status === 'fulfilled') rows.push({ ...tasks[i], ...r.value });
     });
-    if (rows.length === 0) throw new Error('Ingen data tilgængelig for de seneste 12 måneder.');
-    renderHistorik(rows);
+    if (rows.length === 0) throw new Error(`Ingen data tilgængelig for ${historikYear}.`);
+    historikYearCache[historikYear] = rows;
+    renderHistorikYearView(rows);
     spinner.classList.add('hidden');
     content.classList.remove('hidden');
   } catch (err) {
@@ -554,16 +569,43 @@ async function loadHistorik() {
   }
 }
 
-function renderHistorik(rows) {
-  const labels = rows.map(r => `${MÅNEDER[r.maaned - 1].slice(0,3)} ${r.aar}`);
+function changeHistorikYear(delta) {
+  historikYear += delta;
+  historikDrillMonth = null;
+  updateHistorikYearLabel();
+  loadHistorik();
+}
+document.getElementById('historik-prev-year').addEventListener('click', () => changeHistorikYear(-1));
+document.getElementById('historik-next-year').addEventListener('click', () => changeHistorikYear(1));
+document.getElementById('historik-back').addEventListener('click', () => {
+  historikDrillMonth = null;
+  renderHistorikYearView(historikYearCache[historikYear]);
+});
+
+function renderHistorikYearView(rows) {
+  historikDrillMonth = null;
+  document.getElementById('historik-chart-nav').classList.add('hidden');
+  document.getElementById('historik-thead-row').innerHTML = `
+    <th>Måned</th><th>Forbrug</th><th>Sol kWh</th><th>Gns. spot</th><th>Sol kr.</th><th>Netto kr.</th>
+  `;
+
+  const maanederMedData = rows.filter(r => (r.forbrug_kwh ?? r.total_kwh ?? 0) > 0 || (r.produktion_kwh ?? 0) > 0);
+  const totalKr = rows.reduce((s, r) => s + (r.netto_kr ?? r.total_kr ?? 0), 0);
+  const totalKwh = rows.reduce((s, r) => s + (r.forbrug_kwh ?? r.total_kwh ?? 0), 0);
+  const antal = maanederMedData.length || 1;
+  document.getElementById('stat-historik-gns-kr-label').textContent = 'gns. kr./måned';
+  document.getElementById('stat-historik-gns-kwh-label').textContent = 'gns. kWh/måned';
+  document.getElementById('stat-historik-gns-kr').textContent = fmtKr(totalKr / antal);
+  document.getElementById('stat-historik-gns-kwh').textContent = fmtKwh(totalKwh / antal);
+
+  const labels = rows.map(r => MÅNEDER[r.maaned - 1].slice(0, 3));
   const nettoData = rows.map(r => r.netto_kr ?? r.total_kr);
   const kwhData = rows.map(r => r.forbrug_kwh ?? r.total_kwh);
   const prodData = rows.map(r => r.produktion_kwh ?? 0);
 
   if (historikChart) { historikChart.destroy(); historikChart = null; }
-
-  const ctx = document.getElementById('historik-chart').getContext('2d');
-  historikChart = new Chart(ctx, {
+  const chartEl = document.getElementById('historik-chart');
+  historikChart = new Chart(chartEl.getContext('2d'), {
     type: 'bar',
     data: {
       labels,
@@ -594,6 +636,12 @@ function renderHistorik(rows) {
         yKr: { type: 'linear', position: 'left', title: { display: true, text: 'kr.' } },
         yKwh: { type: 'linear', position: 'right', title: { display: true, text: 'kWh' }, grid: { display: false } },
       },
+      onClick: (event, elements) => {
+        if (elements.length > 0) renderHistorikMonthView(rows[elements[0].index]);
+      },
+      onHover: (event, elements) => {
+        chartEl.style.cursor = elements.length > 0 ? 'pointer' : 'default';
+      },
     },
   });
 
@@ -605,6 +653,8 @@ function renderHistorik(rows) {
     const solKr = r.produktion_kr ?? 0;
     const nettoKr = r.netto_kr ?? r.total_kr;
     const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', () => renderHistorikMonthView(r));
     tr.innerHTML = `
       <td>${MÅNEDER[r.maaned - 1]} ${r.aar}</td>
       <td>${forbrug != null ? forbrug.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
@@ -616,7 +666,86 @@ function renderHistorik(rows) {
     tbody.appendChild(tr);
   });
 
-  document.querySelector('#tab-historik .chart-wrap').style.height = '280px';
+  document.getElementById('historik-chart-wrap').style.height = '280px';
+}
+
+function renderHistorikMonthView(monthRow) {
+  historikDrillMonth = { aar: monthRow.aar, maaned: monthRow.maaned };
+  document.getElementById('historik-chart-nav').classList.remove('hidden');
+  document.getElementById('historik-chart-label').textContent = `${MÅNEDER[monthRow.maaned - 1]} ${monthRow.aar}`;
+  document.getElementById('historik-thead-row').innerHTML = `
+    <th>Dag</th><th>Forbrug</th><th>Sol kWh</th><th>Gns. spot</th><th>Sol kr.</th><th>Netto kr.</th>
+  `;
+
+  const days = groupByDkDay(monthRow.timer || []);
+  const sortedDates = Object.keys(days).sort();
+
+  const dageMedData = sortedDates.length || 1;
+  const totalKr = sortedDates.reduce((s, d) => s + (days[d].kr - days[d].produktion_kr), 0);
+  const totalKwh = sortedDates.reduce((s, d) => s + days[d].kwh, 0);
+  document.getElementById('stat-historik-gns-kr-label').textContent = 'gns. kr./dag';
+  document.getElementById('stat-historik-gns-kwh-label').textContent = 'gns. kWh/dag';
+  document.getElementById('stat-historik-gns-kr').textContent = fmtKr(totalKr / dageMedData);
+  document.getElementById('stat-historik-gns-kwh').textContent = fmtKwh(totalKwh / dageMedData);
+
+  const labels = sortedDates.map(dkDateToShortLabel);
+  const nettoData = sortedDates.map(d => round2(days[d].kr - days[d].produktion_kr));
+  const kwhData = sortedDates.map(d => round2(days[d].kwh));
+  const prodData = sortedDates.map(d => round2(days[d].produktion_kwh));
+
+  if (historikChart) { historikChart.destroy(); historikChart = null; }
+  const chartEl = document.getElementById('historik-chart');
+  historikChart = new Chart(chartEl.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Netto (kr.)', data: nettoData,
+          backgroundColor: 'rgba(46, 125, 50, 0.75)', borderColor: '#1b5e20', borderWidth: 1,
+          yAxisID: 'yKr',
+        },
+        {
+          type: 'line', label: 'Forbrug fra net (kWh)', data: kwhData,
+          borderColor: '#1565c0', backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yKwh',
+        },
+        {
+          type: 'line', label: 'Produktion til net (kWh)', data: prodData,
+          borderColor: '#e65100', backgroundColor: 'transparent',
+          borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yKwh',
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        yKr: { type: 'linear', position: 'left', title: { display: true, text: 'kr.' } },
+        yKwh: { type: 'linear', position: 'right', title: { display: true, text: 'kWh' }, grid: { display: false } },
+      },
+    },
+  });
+
+  const tbody = document.getElementById('historik-tbody');
+  tbody.innerHTML = '';
+  [...sortedDates].reverse().forEach(d => {
+    const day = days[d];
+    const nettoKr = day.kr - day.produktion_kr;
+    const gnsSpot = day.count > 0 ? (day.spotpris_sum / day.count) * 100 : null;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${dkDateToShortLabel(d)}</td>
+      <td>${day.kwh.toLocaleString('da-DK', {maximumFractionDigits:1})} kWh</td>
+      <td>${day.produktion_kwh > 0 ? day.produktion_kwh.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
+      <td>${gnsSpot != null ? gnsSpot.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' øre' : '—'}</td>
+      <td>${day.produktion_kr > 0 ? day.produktion_kr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</td>
+      <td><strong>${nettoKr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2})} kr.</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('historik-chart-wrap').style.height = '280px';
 }
 
 // ─── PRISER VIEW ───────────────────────────────────────────────────────────
