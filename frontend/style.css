@@ -256,6 +256,18 @@ thead th {
   border-bottom: 2px solid var(--border);
 }
 
+.sortable-row th {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.sortable-row th:hover { background: #d5ecd7; }
+
+#historik-vis-flere-aar {
+  display: block;
+  margin: 16px auto 0;
+}
+
 tbody tr:nth-child(even) { background: #fafafa; }
 
 tbody td {

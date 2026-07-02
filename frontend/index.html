@@ -130,7 +130,11 @@
 
     <!-- HISTORIK VIEW -->
     <section id="tab-historik" class="tab-content hidden">
-      <div class="month-picker" id="historik-year-picker">
+      <div class="chart-nav" id="historik-chart-nav">
+        <button id="historik-back" class="chart-back-btn hidden">&#8592;</button>
+        <span id="historik-chart-label" class="chart-nav-label">Alle år</span>
+      </div>
+      <div class="month-picker hidden" id="historik-year-picker">
         <button id="historik-prev-year" class="nav-btn" aria-label="Forrige år">&#8249;</button>
         <span id="historik-year-label" class="month-label"></span>
         <button id="historik-next-year" class="nav-btn" aria-label="Næste år">&#8250;</button>
@@ -152,27 +156,24 @@
         </div>
 
         <div class="chart-wrap" id="historik-chart-wrap">
-          <div id="historik-chart-nav" class="chart-nav hidden">
-            <button id="historik-back" class="chart-back-btn">&#8592; Måneder</button>
-            <span id="historik-chart-label" class="chart-nav-label"></span>
-          </div>
           <canvas id="historik-chart"></canvas>
         </div>
         <div class="table-wrap">
           <table id="historik-tabel">
             <thead>
-              <tr id="historik-thead-row">
-                <th>Måned</th>
-                <th>Forbrug</th>
-                <th>Sol kWh</th>
-                <th>Gns. spot</th>
-                <th>Sol kr.</th>
-                <th>Netto kr.</th>
+              <tr id="historik-thead-row" class="sortable-row">
+                <th data-col="0">Måned</th>
+                <th data-col="1">Forbrug</th>
+                <th data-col="2">Sol kWh</th>
+                <th data-col="3">Gns. spot</th>
+                <th data-col="4">Sol kr.</th>
+                <th data-col="5">Netto kr.</th>
               </tr>
             </thead>
             <tbody id="historik-tbody"></tbody>
           </table>
         </div>
+        <button id="historik-vis-flere-aar" class="chart-back-btn hidden">Vis tidligere år</button>
       </div>
     </section>
 

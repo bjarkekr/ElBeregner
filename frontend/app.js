@@ -518,12 +518,212 @@ document.getElementById('produktion-back').addEventListener('click', () => {
 });
 
 // ─── HISTORIK VIEW ─────────────────────────────────────────────────────────
+// 4 niveauer: alle-aar → aar → maaned → dag
 let historikLoaded = false;
 let historikChart = null;
+let historikView = 'aar';
 let historikYear = new Date().getFullYear();
-let historikYearCache = {};       // { [year]: rows[] }
-let historikDrillMonth = null;    // null = årsvisning, ellers { aar, maaned }
+let historikYearCache = {};        // { [year]: monthRows[] }
+let historikCurrentMonthRow = null; // sat når vi går ind i måned/dag-niveau
+let historikAlleAarYears = [];
+const HISTORIK_ALLE_AAR_VINDUE = 3;
 
+// ── Fælles sorterbar tabel ──────────────────────────────────────────────
+let historikRows = [];
+let historikColLabels = [];
+let historikSortCol = null;
+let historikSortAsc = true;
+const HISTORIK_COL_KEYS = ['sortKey0', 'forbrug_kwh', 'produktion_kwh', 'gns_spot', 'produktion_kr', 'netto_kr'];
+
+function renderHistorikTable(rows, colLabels) {
+  historikRows = rows;
+  historikColLabels = colLabels;
+  historikSortCol = null;
+  historikSortAsc = true;
+  applyHistorikSortAndRenderTable();
+}
+
+function applyHistorikSortAndRenderTable() {
+  let rows = [...historikRows];
+  if (historikSortCol != null) {
+    const key = HISTORIK_COL_KEYS[historikSortCol];
+    rows.sort((a, b) => (a[key] ?? -Infinity) - (b[key] ?? -Infinity));
+    if (!historikSortAsc) rows.reverse();
+  }
+
+  document.querySelectorAll('#historik-thead-row th').forEach((th, i) => {
+    const pil = historikSortCol === i ? (historikSortAsc ? ' ▲' : ' ▼') : '';
+    th.textContent = historikColLabels[i] + pil;
+  });
+
+  const tbody = document.getElementById('historik-tbody');
+  tbody.innerHTML = '';
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    if (r.onClick) { tr.style.cursor = 'pointer'; tr.addEventListener('click', r.onClick); }
+    tr.innerHTML = `
+      <td>${r.label}</td>
+      <td>${r.forbrug_kwh != null ? fmtKwh(r.forbrug_kwh) : '—'}</td>
+      <td>${r.produktion_kwh > 0 ? fmtKwh(r.produktion_kwh) : '—'}</td>
+      <td>${r.gns_spot != null ? (r.gns_spot * 100).toLocaleString('da-DK', {maximumFractionDigits:1}) + ' øre' : '—'}</td>
+      <td>${r.produktion_kr > 0 ? fmtKr(r.produktion_kr) : '—'}</td>
+      <td><strong>${r.netto_kr != null ? fmtKr(r.netto_kr) : '—'}</strong></td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('historik-thead-row').addEventListener('click', (e) => {
+  const th = e.target.closest('th');
+  if (!th) return;
+  const idx = Number(th.dataset.col);
+  if (historikSortCol === idx) historikSortAsc = !historikSortAsc;
+  else { historikSortCol = idx; historikSortAsc = true; }
+  applyHistorikSortAndRenderTable();
+});
+
+// ── Fælles hjælpere ──────────────────────────────────────────────────────
+async function fetchHistorikYearRows(year) {
+  if (historikYearCache[year]) return historikYearCache[year];
+  const tasks = [];
+  for (let m = 1; m <= 12; m++) tasks.push({ aar: year, maaned: m });
+  const results = await Promise.allSettled(
+    tasks.map(t => apiFetch(`/api/maaned?aar=${t.aar}&maaned=${t.maaned}`))
+  );
+  const rows = [];
+  results.forEach((r, i) => {
+    if (r.status === 'fulfilled') rows.push({ ...tasks[i], ...r.value });
+  });
+  historikYearCache[year] = rows;
+  return rows;
+}
+
+function setHistorikNavState({ backLabel, headerLabel, showYearPicker, showVisFlereAar }) {
+  const back = document.getElementById('historik-back');
+  back.classList.toggle('hidden', !backLabel);
+  if (backLabel) back.textContent = `← ${backLabel}`;
+  document.getElementById('historik-chart-label').textContent = headerLabel;
+  document.getElementById('historik-year-picker').classList.toggle('hidden', !showYearPicker);
+  document.getElementById('historik-vis-flere-aar').classList.toggle('hidden', !showVisFlereAar);
+}
+
+document.getElementById('historik-back').addEventListener('click', () => {
+  if (historikView === 'dag') renderHistorikMonthView(historikCurrentMonthRow);
+  else if (historikView === 'maaned') { historikView = 'aar'; renderHistorikYearView(historikYearCache[historikYear]); }
+  else if (historikView === 'aar') loadHistorikAlleAar();
+});
+
+// ── Niveau 1: alle år ────────────────────────────────────────────────────
+async function loadHistorikAlleAar(udvid = false) {
+  historikView = 'alle-aar';
+  const spinner = document.getElementById('historik-spinner');
+  const error = document.getElementById('historik-error');
+  const content = document.getElementById('historik-content');
+  spinner.classList.remove('hidden');
+  error.classList.add('hidden');
+  content.classList.add('hidden');
+
+  const nu = new Date().getFullYear();
+  if (historikAlleAarYears.length === 0) {
+    for (let y = nu - HISTORIK_ALLE_AAR_VINDUE + 1; y <= nu; y++) historikAlleAarYears.push(y);
+  } else if (udvid) {
+    const forsteAar = historikAlleAarYears[0];
+    const nye = [];
+    for (let y = forsteAar - HISTORIK_ALLE_AAR_VINDUE; y < forsteAar; y++) nye.push(y);
+    historikAlleAarYears = [...nye, ...historikAlleAarYears];
+  }
+
+  try {
+    const yearsData = [];
+    for (const year of historikAlleAarYears) {
+      const rows = await fetchHistorikYearRows(year);
+      const forbrug = rows.reduce((s, r) => s + (r.forbrug_kwh ?? r.total_kwh ?? 0), 0);
+      const prod = rows.reduce((s, r) => s + (r.produktion_kwh ?? 0), 0);
+      if (rows.length === 0 || (forbrug === 0 && prod === 0)) continue;
+      yearsData.push({
+        aar: year,
+        forbrug_kwh: forbrug,
+        produktion_kwh: prod,
+        netto_kr: rows.reduce((s, r) => s + (r.netto_kr ?? r.total_kr ?? 0), 0),
+        produktion_kr: rows.reduce((s, r) => s + (r.produktion_kr ?? 0), 0),
+        gns_spotpris_kwh: (() => {
+          const med = rows.filter(r => r.gns_spotpris_kwh != null && r.gns_spotpris_kwh > 0);
+          return med.length ? med.reduce((s, r) => s + r.gns_spotpris_kwh, 0) / med.length : 0;
+        })(),
+      });
+    }
+    if (yearsData.length === 0) throw new Error('Ingen data tilgængelig endnu.');
+    renderHistorikAlleAar(yearsData);
+    spinner.classList.add('hidden');
+    content.classList.remove('hidden');
+  } catch (err) {
+    spinner.classList.add('hidden');
+    error.classList.remove('hidden');
+    error.textContent = err.message;
+  }
+}
+
+document.getElementById('historik-vis-flere-aar').addEventListener('click', () => loadHistorikAlleAar(true));
+
+function renderHistorikAlleAar(yearsData) {
+  historikView = 'alle-aar';
+  setHistorikNavState({ backLabel: null, headerLabel: 'Alle år', showYearPicker: false, showVisFlereAar: true });
+
+  const totalKr = yearsData.reduce((s, y) => s + y.netto_kr, 0);
+  const totalKwh = yearsData.reduce((s, y) => s + y.forbrug_kwh, 0);
+  const antal = yearsData.length || 1;
+  document.getElementById('stat-historik-gns-kr-label').textContent = 'gns. kr./år';
+  document.getElementById('stat-historik-gns-kwh-label').textContent = 'gns. kWh/år';
+  document.getElementById('stat-historik-gns-kr').textContent = fmtKr(totalKr / antal);
+  document.getElementById('stat-historik-gns-kwh').textContent = fmtKwh(totalKwh / antal);
+
+  const labels = yearsData.map(y => String(y.aar));
+  const nettoData = yearsData.map(y => y.netto_kr);
+  const kwhData = yearsData.map(y => y.forbrug_kwh);
+  const prodData = yearsData.map(y => y.produktion_kwh);
+
+  if (historikChart) { historikChart.destroy(); historikChart = null; }
+  const chartEl = document.getElementById('historik-chart');
+  historikChart = new Chart(chartEl.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Netto (kr.)', data: nettoData, backgroundColor: 'rgba(46, 125, 50, 0.75)', borderColor: '#1b5e20', borderWidth: 1, yAxisID: 'yKr' },
+        { type: 'line', label: 'Forbrug fra net (kWh)', data: kwhData, borderColor: '#1565c0', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 5, tension: 0.3, yAxisID: 'yKwh' },
+        { type: 'line', label: 'Produktion til net (kWh)', data: prodData, borderColor: '#e65100', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 5, tension: 0.3, yAxisID: 'yKwh' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'top' } },
+      scales: {
+        yKr: { type: 'linear', position: 'left', title: { display: true, text: 'kr.' } },
+        yKwh: { type: 'linear', position: 'right', title: { display: true, text: 'kWh' }, grid: { display: false } },
+      },
+      onClick: (event, elements) => { if (elements.length > 0) selectHistorikYear(yearsData[elements[0].index].aar); },
+      onHover: (event, elements) => { chartEl.style.cursor = elements.length > 0 ? 'pointer' : 'default'; },
+    },
+  });
+
+  const rows = yearsData.map(y => ({
+    label: String(y.aar), sortKey0: y.aar,
+    forbrug_kwh: y.forbrug_kwh, produktion_kwh: y.produktion_kwh,
+    gns_spot: y.gns_spotpris_kwh, produktion_kr: y.produktion_kr, netto_kr: y.netto_kr,
+    onClick: () => selectHistorikYear(y.aar),
+  })).reverse();
+  renderHistorikTable(rows, ['År', 'Forbrug', 'Sol kWh', 'Gns. spot', 'Sol kr.', 'Netto kr.']);
+
+  document.getElementById('historik-chart-wrap').style.height = '280px';
+}
+
+async function selectHistorikYear(year) {
+  historikYear = year;
+  historikView = 'aar';
+  await loadHistorik();
+}
+
+// ── Niveau 2: måneder i et år ────────────────────────────────────────────
 function updateHistorikYearLabel() {
   document.getElementById('historik-year-label').textContent = String(historikYear);
   document.getElementById('historik-next-year').disabled = historikYear >= new Date().getFullYear();
@@ -531,6 +731,7 @@ function updateHistorikYearLabel() {
 
 async function loadHistorik() {
   historikLoaded = true;
+  historikView = 'aar';
   updateHistorikYearLabel();
   const spinner = document.getElementById('historik-spinner');
   const error = document.getElementById('historik-error');
@@ -539,26 +740,9 @@ async function loadHistorik() {
   error.classList.add('hidden');
   content.classList.add('hidden');
 
-  if (historikYearCache[historikYear]) {
-    renderHistorikYearView(historikYearCache[historikYear]);
-    spinner.classList.add('hidden');
-    content.classList.remove('hidden');
-    return;
-  }
-
-  const tasks = [];
-  for (let m = 1; m <= 12; m++) tasks.push({ aar: historikYear, maaned: m });
-
   try {
-    const results = await Promise.allSettled(
-      tasks.map(t => apiFetch(`/api/maaned?aar=${t.aar}&maaned=${t.maaned}`))
-    );
-    const rows = [];
-    results.forEach((r, i) => {
-      if (r.status === 'fulfilled') rows.push({ ...tasks[i], ...r.value });
-    });
+    const rows = await fetchHistorikYearRows(historikYear);
     if (rows.length === 0) throw new Error(`Ingen data tilgængelig for ${historikYear}.`);
-    historikYearCache[historikYear] = rows;
     renderHistorikYearView(rows);
     spinner.classList.add('hidden');
     content.classList.remove('hidden');
@@ -571,23 +755,16 @@ async function loadHistorik() {
 
 function changeHistorikYear(delta) {
   historikYear += delta;
-  historikDrillMonth = null;
   updateHistorikYearLabel();
   loadHistorik();
 }
 document.getElementById('historik-prev-year').addEventListener('click', () => changeHistorikYear(-1));
 document.getElementById('historik-next-year').addEventListener('click', () => changeHistorikYear(1));
-document.getElementById('historik-back').addEventListener('click', () => {
-  historikDrillMonth = null;
-  renderHistorikYearView(historikYearCache[historikYear]);
-});
 
 function renderHistorikYearView(rows) {
-  historikDrillMonth = null;
-  document.getElementById('historik-chart-nav').classList.add('hidden');
-  document.getElementById('historik-thead-row').innerHTML = `
-    <th>Måned</th><th>Forbrug</th><th>Sol kWh</th><th>Gns. spot</th><th>Sol kr.</th><th>Netto kr.</th>
-  `;
+  historikView = 'aar';
+  setHistorikNavState({ backLabel: 'Alle år', headerLabel: '', showYearPicker: true, showVisFlereAar: false });
+  updateHistorikYearLabel();
 
   const maanederMedData = rows.filter(r => (r.forbrug_kwh ?? r.total_kwh ?? 0) > 0 || (r.produktion_kwh ?? 0) > 0);
   const totalKr = rows.reduce((s, r) => s + (r.netto_kr ?? r.total_kr ?? 0), 0);
@@ -610,23 +787,9 @@ function renderHistorikYearView(rows) {
     data: {
       labels,
       datasets: [
-        {
-          label: 'Netto (kr.)',
-          data: nettoData,
-          backgroundColor: 'rgba(46, 125, 50, 0.75)',
-          borderColor: '#1b5e20', borderWidth: 1,
-          yAxisID: 'yKr',
-        },
-        {
-          type: 'line', label: 'Forbrug fra net (kWh)', data: kwhData,
-          borderColor: '#1565c0', backgroundColor: 'transparent',
-          borderWidth: 2, pointRadius: 4, tension: 0.3, yAxisID: 'yKwh',
-        },
-        {
-          type: 'line', label: 'Produktion til net (kWh)', data: prodData,
-          borderColor: '#e65100', backgroundColor: 'transparent',
-          borderWidth: 2, pointRadius: 4, tension: 0.3, yAxisID: 'yKwh',
-        },
+        { label: 'Netto (kr.)', data: nettoData, backgroundColor: 'rgba(46, 125, 50, 0.75)', borderColor: '#1b5e20', borderWidth: 1, yAxisID: 'yKr' },
+        { type: 'line', label: 'Forbrug fra net (kWh)', data: kwhData, borderColor: '#1565c0', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 4, tension: 0.3, yAxisID: 'yKwh' },
+        { type: 'line', label: 'Produktion til net (kWh)', data: prodData, borderColor: '#e65100', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 4, tension: 0.3, yAxisID: 'yKwh' },
       ],
     },
     options: {
@@ -636,46 +799,30 @@ function renderHistorikYearView(rows) {
         yKr: { type: 'linear', position: 'left', title: { display: true, text: 'kr.' } },
         yKwh: { type: 'linear', position: 'right', title: { display: true, text: 'kWh' }, grid: { display: false } },
       },
-      onClick: (event, elements) => {
-        if (elements.length > 0) renderHistorikMonthView(rows[elements[0].index]);
-      },
-      onHover: (event, elements) => {
-        chartEl.style.cursor = elements.length > 0 ? 'pointer' : 'default';
-      },
+      onClick: (event, elements) => { if (elements.length > 0) renderHistorikMonthView(rows[elements[0].index]); },
+      onHover: (event, elements) => { chartEl.style.cursor = elements.length > 0 ? 'pointer' : 'default'; },
     },
   });
 
-  const tbody = document.getElementById('historik-tbody');
-  tbody.innerHTML = '';
-  [...rows].reverse().forEach(r => {
-    const forbrug = r.forbrug_kwh ?? r.total_kwh;
-    const prod = r.produktion_kwh ?? 0;
-    const solKr = r.produktion_kr ?? 0;
-    const nettoKr = r.netto_kr ?? r.total_kr;
-    const tr = document.createElement('tr');
-    tr.style.cursor = 'pointer';
-    tr.addEventListener('click', () => renderHistorikMonthView(r));
-    tr.innerHTML = `
-      <td>${MÅNEDER[r.maaned - 1]} ${r.aar}</td>
-      <td>${forbrug != null ? forbrug.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
-      <td>${prod > 0 ? prod.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
-      <td>${r.gns_spotpris_kwh != null ? (r.gns_spotpris_kwh * 100).toLocaleString('da-DK', {maximumFractionDigits:1}) + ' øre' : '—'}</td>
-      <td>${solKr > 0 ? solKr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</td>
-      <td><strong>${nettoKr != null ? nettoKr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</strong></td>
-    `;
-    tbody.appendChild(tr);
-  });
+  const tableRows = rows.map(r => ({
+    label: `${MÅNEDER[r.maaned - 1]} ${r.aar}`, sortKey0: r.aar * 100 + r.maaned,
+    forbrug_kwh: r.forbrug_kwh ?? r.total_kwh, produktion_kwh: r.produktion_kwh ?? 0,
+    gns_spot: r.gns_spotpris_kwh, produktion_kr: r.produktion_kr ?? 0, netto_kr: r.netto_kr ?? r.total_kr,
+    onClick: () => renderHistorikMonthView(r),
+  })).reverse();
+  renderHistorikTable(tableRows, ['Måned', 'Forbrug', 'Sol kWh', 'Gns. spot', 'Sol kr.', 'Netto kr.']);
 
   document.getElementById('historik-chart-wrap').style.height = '280px';
 }
 
+// ── Niveau 3: dage i en måned ────────────────────────────────────────────
 function renderHistorikMonthView(monthRow) {
-  historikDrillMonth = { aar: monthRow.aar, maaned: monthRow.maaned };
-  document.getElementById('historik-chart-nav').classList.remove('hidden');
-  document.getElementById('historik-chart-label').textContent = `${MÅNEDER[monthRow.maaned - 1]} ${monthRow.aar}`;
-  document.getElementById('historik-thead-row').innerHTML = `
-    <th>Dag</th><th>Forbrug</th><th>Sol kWh</th><th>Gns. spot</th><th>Sol kr.</th><th>Netto kr.</th>
-  `;
+  historikView = 'maaned';
+  historikCurrentMonthRow = monthRow;
+  setHistorikNavState({
+    backLabel: String(monthRow.aar), headerLabel: `${MÅNEDER[monthRow.maaned - 1]} ${monthRow.aar}`,
+    showYearPicker: false, showVisFlereAar: false,
+  });
 
   const days = groupByDkDay(monthRow.timer || []);
   const sortedDates = Object.keys(days).sort();
@@ -700,21 +847,9 @@ function renderHistorikMonthView(monthRow) {
     data: {
       labels,
       datasets: [
-        {
-          label: 'Netto (kr.)', data: nettoData,
-          backgroundColor: 'rgba(46, 125, 50, 0.75)', borderColor: '#1b5e20', borderWidth: 1,
-          yAxisID: 'yKr',
-        },
-        {
-          type: 'line', label: 'Forbrug fra net (kWh)', data: kwhData,
-          borderColor: '#1565c0', backgroundColor: 'transparent',
-          borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yKwh',
-        },
-        {
-          type: 'line', label: 'Produktion til net (kWh)', data: prodData,
-          borderColor: '#e65100', backgroundColor: 'transparent',
-          borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yKwh',
-        },
+        { label: 'Netto (kr.)', data: nettoData, backgroundColor: 'rgba(46, 125, 50, 0.75)', borderColor: '#1b5e20', borderWidth: 1, yAxisID: 'yKr' },
+        { type: 'line', label: 'Forbrug fra net (kWh)', data: kwhData, borderColor: '#1565c0', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yKwh' },
+        { type: 'line', label: 'Produktion til net (kWh)', data: prodData, borderColor: '#e65100', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, yAxisID: 'yKwh' },
       ],
     },
     options: {
@@ -724,28 +859,73 @@ function renderHistorikMonthView(monthRow) {
         yKr: { type: 'linear', position: 'left', title: { display: true, text: 'kr.' } },
         yKwh: { type: 'linear', position: 'right', title: { display: true, text: 'kWh' }, grid: { display: false } },
       },
+      onClick: (event, elements) => { if (elements.length > 0) renderHistorikDagView(monthRow, sortedDates[elements[0].index]); },
+      onHover: (event, elements) => { chartEl.style.cursor = elements.length > 0 ? 'pointer' : 'default'; },
     },
   });
 
-  const tbody = document.getElementById('historik-tbody');
-  tbody.innerHTML = '';
-  [...sortedDates].reverse().forEach(d => {
+  const tableRows = sortedDates.map(d => {
     const day = days[d];
-    const nettoKr = day.kr - day.produktion_kr;
-    const gnsSpot = day.count > 0 ? (day.spotpris_sum / day.count) * 100 : null;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-      <td>${dkDateToShortLabel(d)}</td>
-      <td>${day.kwh.toLocaleString('da-DK', {maximumFractionDigits:1})} kWh</td>
-      <td>${day.produktion_kwh > 0 ? day.produktion_kwh.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' kWh' : '—'}</td>
-      <td>${gnsSpot != null ? gnsSpot.toLocaleString('da-DK', {maximumFractionDigits:1}) + ' øre' : '—'}</td>
-      <td>${day.produktion_kr > 0 ? day.produktion_kr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' kr.' : '—'}</td>
-      <td><strong>${nettoKr.toLocaleString('da-DK', {minimumFractionDigits:2, maximumFractionDigits:2})} kr.</strong></td>
-    `;
-    tbody.appendChild(tr);
-  });
+    return {
+      label: dkDateToShortLabel(d), sortKey0: Number(d.replace(/-/g, '')),
+      forbrug_kwh: day.kwh, produktion_kwh: day.produktion_kwh,
+      gns_spot: day.count > 0 ? day.spotpris_sum / day.count : null,
+      produktion_kr: day.produktion_kr, netto_kr: day.kr - day.produktion_kr,
+      onClick: () => renderHistorikDagView(monthRow, d),
+    };
+  }).reverse();
+  renderHistorikTable(tableRows, ['Dag', 'Forbrug', 'Sol kWh', 'Gns. spot', 'Sol kr.', 'Netto kr.']);
 
   document.getElementById('historik-chart-wrap').style.height = '280px';
+}
+
+// ── Niveau 4: timer på en dag ────────────────────────────────────────────
+function renderHistorikDagView(monthRow, day) {
+  historikView = 'dag';
+  setHistorikNavState({
+    backLabel: `${MÅNEDER[monthRow.maaned - 1]} ${monthRow.aar}`, headerLabel: dkDateToFullLabel(day),
+    showYearPicker: false, showVisFlereAar: false,
+  });
+
+  const dayTimer = (monthRow.timer || []).filter(t => utcToDkDateKey(t.time) === day);
+
+  const totalKr = dayTimer.reduce((s, t) => s + (t.kr - (t.produktion_kr ?? 0)), 0);
+  const totalKwh = dayTimer.reduce((s, t) => s + t.kwh, 0);
+  document.getElementById('stat-historik-gns-kr-label').textContent = 'forbrug kr.';
+  document.getElementById('stat-historik-gns-kwh-label').textContent = 'forbrug kWh';
+  document.getElementById('stat-historik-gns-kr').textContent = fmtKr(totalKr);
+  document.getElementById('stat-historik-gns-kwh').textContent = fmtKwh(totalKwh);
+
+  const labels = dayTimer.map(t => utcToHourLabel(t.time));
+  const kwh = dayTimer.map(t => t.kwh);
+  const spot = dayTimer.map(t => parseFloat((t.spotpris_kwh * 100).toFixed(2)));
+
+  if (historikChart) { historikChart.destroy(); historikChart = null; }
+  const chartEl = document.getElementById('historik-chart');
+  historikChart = new Chart(chartEl.getContext('2d'), {
+    data: {
+      labels,
+      datasets: [
+        { type: 'bar', label: 'Forbrug fra net (kWh)', data: kwh, backgroundColor: 'rgba(76, 175, 80, 0.6)', borderColor: '#2e7d32', borderWidth: 0, yAxisID: 'yKwh', order: 2 },
+        spotDataset(spot),
+      ],
+    },
+    options: {
+      ...CHART_OPTIONS_BASE,
+      scales: { ...CHART_OPTIONS_BASE.scales, x: { ticks: { maxTicksLimit: 24, font: { size: 10 } } } },
+    },
+  });
+
+  const tableRows = dayTimer.map(t => ({
+    label: utcToHourLabel(t.time), sortKey0: new Date(t.time).getTime(),
+    forbrug_kwh: t.kwh, produktion_kwh: t.produktion_kwh ?? 0,
+    gns_spot: t.spotpris_kwh, produktion_kr: t.produktion_kr ?? 0,
+    netto_kr: t.kr - (t.produktion_kr ?? 0),
+    onClick: null,
+  })).reverse();
+  renderHistorikTable(tableRows, ['Tid', 'Forbrug', 'Sol kWh', 'Spotpris', 'Sol kr.', 'Netto kr.']);
+
+  document.getElementById('historik-chart-wrap').style.height = '300px';
 }
 
 // ─── PRISER VIEW ───────────────────────────────────────────────────────────
