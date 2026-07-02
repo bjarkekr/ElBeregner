@@ -268,6 +268,8 @@ function renderForbrug(data) {
   document.getElementById('stat-forbrug-kr').textContent = fmtKr(data.total_kr);
   document.getElementById('stat-forbrug-spot').textContent = fmtOre(data.gns_spotpris_kwh);
   document.getElementById('stat-forbrug-timer').textContent = data.timer.length;
+  const dageMedData = Object.keys(groupByDkDay(data.timer)).length;
+  document.getElementById('stat-forbrug-gns-dag').textContent = dageMedData ? fmtKr(data.total_kr / dageMedData) : '—';
 
   const advarsel = document.getElementById('manglende-advarsel');
   if (data.manglende_timer_antal > 0) {
@@ -533,7 +535,7 @@ async function loadHistorik() {
 
   try {
     const results = await Promise.allSettled(
-      tasks.map(t => apiFetch(`/api/maaned?aar=${t.aar}&maaned=${t.maaned}&kun_cache=true`))
+      tasks.map(t => apiFetch(`/api/maaned?aar=${t.aar}&maaned=${t.maaned}`))
     );
     const rows = [];
     results.forEach((r, i) => {
