@@ -270,6 +270,8 @@ function renderForbrug(data) {
   document.getElementById('stat-forbrug-timer').textContent = data.timer.length;
   const dageMedData = Object.keys(groupByDkDay(data.timer)).length;
   document.getElementById('stat-forbrug-gns-dag').textContent = dageMedData ? fmtKr(data.total_kr / dageMedData) : '—';
+  document.getElementById('stat-forbrug-gns-kwh-dag').textContent = dageMedData
+    ? fmtKwh((data.forbrug_kwh ?? data.total_kwh) / dageMedData) : '—';
 
   const advarsel = document.getElementById('manglende-advarsel');
   if (data.manglende_timer_antal > 0) {
