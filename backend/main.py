@@ -50,6 +50,10 @@ _db_pool: Optional[asyncpg.Pool] = None
 
 ELOVERBLIK_BASE = "https://api.eloverblik.dk/CustomerApi/api"
 ENERGIDATA_URL = "https://api.energidataservice.dk/dataset/DayAheadPrices"
+ENERGIDATA_ELSPOT_URL = "https://api.energidataservice.dk/dataset/Elspotprices"
+# DayAheadPrices (15-min opløsning) har kun data fra denne UTC-grænse og frem.
+# Alt tidligere skal hentes fra det ældre Elspotprices-datasæt (time-opløsning).
+DAYAHEAD_SKIFT = datetime(2025, 9, 30, 22, 0, 0)
 
 
 def _current_afgifter() -> dict:
@@ -806,27 +810,45 @@ async def _fetch_spotpriser_raw(fra: str, til: str, zone: str = PRISZONE) -> dic
     if not _missing_day_ranges(fra_dt, til_dt, hours_per_utc_day):
         return {"spotpriser": cached}
 
-    params = {
-        "start": f"{fra}T00:00",
-        "end": f"{til_excl}T00:00",
-        "filter": json.dumps({"PriceArea": zone}),
-        "sort": "TimeUTC asc",
-        "limit": 4000,
-    }
+    start_dt = fra_dt
+    end_dt = til_dt + timedelta(days=1)
 
     async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.get(ENERGIDATA_URL, params=params)
+        priser: dict[str, float] = {}
+        if start_dt < DAYAHEAD_SKIFT:
+            priser.update(await _hent_spotpriser_fra_kilde(
+                client, ENERGIDATA_ELSPOT_URL, "HourUTC", "SpotPriceDKK",
+                start_dt, min(end_dt, DAYAHEAD_SKIFT), zone,
+            ))
+        if end_dt > DAYAHEAD_SKIFT:
+            priser.update(await _hent_spotpriser_fra_kilde(
+                client, ENERGIDATA_URL, "TimeUTC", "DayAheadPriceDKK",
+                max(start_dt, DAYAHEAD_SKIFT), end_dt, zone,
+            ))
 
+    await db_save_spotpriser(priser, zone)
+    return {"spotpriser": {**cached, **priser}}
+
+
+async def _hent_spotpriser_fra_kilde(
+    client: httpx.AsyncClient, url: str, time_felt: str, pris_felt: str,
+    start_dt: datetime, end_dt: datetime, zone: str,
+) -> dict[str, float]:
+    params = {
+        "start": start_dt.strftime("%Y-%m-%dT%H:%M"),
+        "end": end_dt.strftime("%Y-%m-%dT%H:%M"),
+        "filter": json.dumps({"PriceArea": zone}),
+        "sort": f"{time_felt} asc",
+        "limit": 20000,
+    }
+    resp = await client.get(url, params=params)
     if resp.status_code != 200:
         raise HTTPException(status_code=502, detail=f"Energi Data Service fejl: {resp.status_code}")
 
     summer: dict[str, list] = {}
     for r in resp.json().get("records", []):
-        t = r.get("TimeUTC", "")
+        t = r.get(time_felt, "")
         if t:
             key = t[:13].replace(" ", "T") + ":00:00Z"
-            summer.setdefault(key, []).append(r.get("DayAheadPriceDKK") or 0.0)
-    priser = {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
-
-    await db_save_spotpriser(priser, zone)
-    return {"spotpriser": {**cached, **priser}}
+            summer.setdefault(key, []).append(r.get(pris_felt) or 0.0)
+    return {k: round(sum(v) / len(v) / 1000, 6) for k, v in summer.items()}
